@@ -24,6 +24,8 @@ struct PaymentState {
   VHandle *district;
   VHandle *customer;
 
+  FutureValue<int32_t> warehouse_tax_future;
+
   NodeBitmap nodes;
 
   InvokeHandle<PaymentState, int> warehouse_future;

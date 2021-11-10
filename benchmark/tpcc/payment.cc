@@ -223,6 +223,10 @@ void PaymentTxn::Run()
             aff);
       }
     } else {
+      // Notify this node when warehouse_tax has a value. If node is the local
+      // node, then Signal() should simply flip the boolean flag anyway.
+      state->warehouse_tax_future.Subscribe(node);
+
       root->AttachRoutine(
           MakeContext(bitmap, payment_amount), node,
           [](const auto &ctx) {
@@ -233,6 +237,7 @@ void PaymentTxn::Run()
               auto w = vhandle.Read<Warehouse::Value>();
               w.w_ytd += payment_amount;
               vhandle.Write(w);
+              state->warehouse_tax_future.Signal(w.w_tax);
               ClientBase::OnUpdateRow(state->warehouse);
             }
 
@@ -247,8 +252,11 @@ void PaymentTxn::Run()
             if (bitmap & 0x04) {
               TxnRow vhandle = index_handle(state->customer);
               auto c = vhandle.Read<Customer::Value>();
-              c.c_balance -= payment_amount;
-              c.c_ytd_payment += payment_amount;
+              auto tax = state->warehouse_tax_future.Wait();
+              auto amount = payment_amount + payment_amount * tax / 100;
+
+              c.c_balance -= amount;
+              c.c_ytd_payment += amount;
               c.c_payment_cnt++;
               vhandle.Write(c);
               ClientBase::OnUpdateRow(state->customer);
