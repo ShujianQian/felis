@@ -184,15 +184,18 @@ EpochTxnSet::~EpochTxnSet()
 
 void EpochClient::GenerateBenchmarks()
 {
-  all_txns = new EpochTxnSet[g_max_epoch - 1];
-  for (auto i = 1; i < g_max_epoch; i++) {
-    for (uint64_t j = 1; j <= NumberOfTxns(); j++) {
-      auto d = std::div((int)(j - 1), NodeConfiguration::g_nr_threads);
-      auto t = d.rem, pos = d.quot;
-      BaseTxn::g_cur_numa_node = t / mem::kNrCorePerNode;
-      all_txns[i - 1].per_core_txns[t]->txns[pos] = CreateTxn(GenerateSerialId(i, j));
+    all_txns = new EpochTxnSet[g_max_epoch - 1];
+    for (auto i = 1; i < g_max_epoch; i++) {
+        // for each of the transactions to run in one epoch
+        for (uint64_t j = 1; j <= NumberOfTxns(); j++) {
+            // evenly distribute the transactions to each thread
+
+            auto d = std::div((int) (j - 1), NodeConfiguration::g_nr_threads);
+            auto t = d.rem, pos = d.quot;
+            BaseTxn::g_cur_numa_node = t / mem::kNrCorePerNode;
+            all_txns[i - 1].per_core_txns[t]->txns[pos] = CreateTxn(GenerateSerialId(i, j));
+        }
     }
-  }
 }
 
 void EpochClient::Start()
@@ -208,9 +211,9 @@ void EpochClient::Start()
 
 uint64_t EpochClient::GenerateSerialId(uint64_t epoch_nr, uint64_t sequence)
 {
-  return (epoch_nr << 32)
-      | (sequence << 8)
-      | (conf.node_id() & 0x00FF);
+    return (epoch_nr << 32)
+           | (sequence << 8)
+           | (conf.node_id() & 0x00FF);
 }
 
 void AllocStateTxnWorker::Run()

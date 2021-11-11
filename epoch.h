@@ -1,3 +1,7 @@
+/*! \file epoch.h
+ *  \brief Defines epoch control classes.
+ */
+
 #ifndef EPOCH_H
 #define EPOCH_H
 
@@ -99,19 +103,36 @@ class EpochCallback {
   void PreComplete();
 };
 
+/*!
+ * \brief Per core set of transactions.
+ */
 struct EpochTxnSet {
-  struct TxnSet {
-    size_t nr;
-    BaseTxn *txns[];
-    TxnSet(size_t nr) : nr(nr) {}
-  };
-  std::array<TxnSet *, NodeConfiguration::kMaxNrThreads> per_core_txns;
-  EpochTxnSet();
-  ~EpochTxnSet();
+
+    /*!
+     * \brief Set of transactions.
+     */
+    struct TxnSet {
+        size_t nr;
+        BaseTxn *txns[];
+
+        TxnSet(size_t nr) : nr(nr)
+        {}
+    };
+
+    std::array<TxnSet *, NodeConfiguration::kMaxNrThreads> per_core_txns;     ///< Array of transaction sets.
+    ///< One for each core.
+
+    EpochTxnSet();
+
+    ~EpochTxnSet();
 };
 
 class CommitBuffer;
 
+
+/*! \brief Base client class.
+ *
+ */
 class EpochClient {
   friend class EpochCallback;
   friend class RunTxnPromiseWorker;
@@ -137,7 +158,8 @@ class EpochClient {
 
   CommitBuffer *commit_buffer;
  public:
-  static EpochClient *g_workload_client;
+  static EpochClient *g_workload_client;    ///< Globally accessible pointer to EpochClient object.
+                                            ///< Initialized in the TPCC and YCSB modules.
   static bool g_enable_granola;
   static bool g_enable_pwv;
 
@@ -147,7 +169,21 @@ class EpochClient {
   EpochClient();
   virtual ~EpochClient() {}
 
+  /*!
+   * \brief Generate a unique ID for a transaction.
+   *
+   * The generated serial ID has the following format:
+   * | 32bit epoch ID | 24bit sequential ID | 8bit NUMA core ID |
+   *
+   * @param epoch_nr    - The epoch in which the transaction is issued.
+   * @param sequence    - The sequential ID of the transaction in the epoch.
+   * @return            - Generated unique ID.
+   */
   uint64_t GenerateSerialId(uint64_t epoch_nr, uint64_t sequence);
+
+  /*!\brief Generate the benchmarks to run.
+   *
+   */
   void GenerateBenchmarks();
   void Start();
 
@@ -156,6 +192,11 @@ class EpochClient {
   LocalityManager &get_contention_locality_manager() { return cont_lmgr; }
 
   virtual unsigned int LoadPercentage() = 0;
+
+  /*!
+   * \brief Getter of number of transactions to run.
+   * @return    - Number of transactions per epoch.
+   */
   unsigned long NumberOfTxns() {
     // return LoadPercentage() * kTxnPerEpoch / 100;
     return g_txn_per_epoch;
@@ -172,6 +213,11 @@ class EpochClient {
   void InitializeEpoch();
   void ExecuteEpoch();
 
+  /*!
+   * \brief Pure virtual function to create a single transaction
+   * @param serial_id   - The unique ID of the transaction.
+   * @return            - Base pointer to the transaction created.
+   */
   virtual BaseTxn *CreateTxn(uint64_t serial_id) = 0;
 
  private:
