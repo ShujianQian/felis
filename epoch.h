@@ -120,18 +120,28 @@ struct EpochTxnSet {
     };
 
     std::array<TxnSet *, NodeConfiguration::kMaxNrThreads> per_core_txns;     ///< Array of transaction sets.
-    ///< One for each core.
+                                                                              ///< One for each core.
 
+    /*!
+     * \brief Default constructor.
+     *
+     * Allocate memory for TxnSet for each nodes bind to each of the NUMA nodes.
+     */
     EpochTxnSet();
 
+    /*!
+     * \briew Default destructor.
+     *
+     * Not implemented.
+     */
     ~EpochTxnSet();
 };
 
 class CommitBuffer;
 
 
-/*! \brief Base client class.
- *
+/*!
+ * \brief Base client class.
  */
 class EpochClient {
   friend class EpochCallback;
@@ -166,13 +176,19 @@ class EpochClient {
   static long g_corescaling_threshold;
   static long g_splitting_threshold;
 
+  /*!
+   * \brief Default constructor.
+   *
+   * TODO
+   */
   EpochClient();
+
   virtual ~EpochClient() {}
 
   /*!
    * \brief Generate a unique ID for a transaction.
    *
-   * The generated serial ID has the following format:
+   * The generated serial ID has the following format: <br>
    * | 32bit epoch ID | 24bit sequential ID | 8bit NUMA core ID |
    *
    * @param epoch_nr    - The epoch in which the transaction is issued.
@@ -181,10 +197,14 @@ class EpochClient {
    */
   uint64_t GenerateSerialId(uint64_t epoch_nr, uint64_t sequence);
 
-  /*!\brief Generate the benchmarks to run.
-   *
+  /*!
+   * \brief Generate the transactions in the benchmark.
    */
   void GenerateBenchmarks();
+
+  /*!
+   * \brief Start benchmark.
+   */
   void Start();
 
   auto completion_object() { return &completion; }
@@ -234,7 +254,9 @@ class EpochClient {
   EpochCallback callback;
   CompletionObject<EpochCallback &> completion;
 
-  EpochTxnSet *all_txns;
+  EpochTxnSet *all_txns;    ///< \brief Array of EpochTxnSet for each epoch.
+                            ///< Containing transactions for each core in the epochs.
+
   std::atomic<EpochTxnSet *> cur_txns;
   unsigned long total_nr_txn;
   unsigned long *per_core_cnts[NodeConfiguration::kMaxNrThreads];

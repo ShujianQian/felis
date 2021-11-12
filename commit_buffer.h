@@ -14,40 +14,55 @@ namespace felis {
 
 class VHandle;
 
+/*!
+ * \brief Commit buffer to deal with repeated updates within one transaction.
+ */
 class CommitBuffer {
- public:
-  struct Entry {
-    VHandle *vhandle;
-    uint32_t short_sid; // sid inside the epoch.
-    std::atomic_int32_t wcnt;
-    union {
-      std::atomic<Entry *> dup = nullptr;
-      VarStr *value;
-    } u;
-    std::atomic<Entry *> next = nullptr;
+public:
+    /*!
+     * \brief Commit buffer entry.
+     */
+    struct Entry {
+        VHandle *vhandle;
+        uint32_t short_sid;         ///< serialID inside the epoch.
+        std::atomic_int32_t wcnt;
+        union {
+            std::atomic<Entry *> dup = nullptr;
+            VarStr *value;
+        } u;
+        std::atomic<Entry *> next = nullptr;
 
-    Entry(VHandle *vhandle, uint32_t sid) : vhandle(vhandle), short_sid(sid), wcnt(1) {}
-  };
- private:
-  std::atomic<Entry *> *ref_hashtable;
-  unsigned long ref_hashtable_size;
-  std::atomic<Entry *> *dup_hashtable;
-  unsigned long dup_hashtable_size;
+        /*!
+         * \brief Default constructor.
+         * @param vhandle
+         * @param sid
+         */
+        Entry(VHandle *vhandle, uint32_t sid) : vhandle(vhandle), short_sid(sid), wcnt(1)
+        {}
+    };
 
-  std::atomic_uint64_t clear_refcnt; // 0 means all clear
+private:
+    std::atomic<Entry *> *ref_hashtable;
+    unsigned long ref_hashtable_size;
+    std::atomic<Entry *> *dup_hashtable;
+    unsigned long dup_hashtable_size;
 
-  std::array<mem::Brk *,
-             mem::ParallelAllocationPolicy::kMaxNrPools> entbrks;
+    std::atomic_uint64_t clear_refcnt; // 0 means all clear
 
-  void EnsureReady();
+    std::array<mem::Brk *, mem::ParallelAllocationPolicy::kMaxNrPools> entbrks;
 
- public:
-  CommitBuffer();
+    void EnsureReady();
 
-  void Reset();
-  void Clear(int core_id);
-  bool AddRef(int core_id, VHandle *vhandle, uint64_t sid);
-  Entry *LookupDuplicate(VHandle *vhandle, uint64_t sid);
+public:
+    CommitBuffer();
+
+    void Reset();
+
+    void Clear(int core_id);
+
+    bool AddRef(int core_id, VHandle *vhandle, uint64_t sid);
+
+    Entry *LookupDuplicate(VHandle *vhandle, uint64_t sid);
 };
 
 using WriteSetDesc = CommitBuffer::Entry;

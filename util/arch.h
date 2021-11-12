@@ -36,9 +36,15 @@ static inline void Prefetch(std::initializer_list<void *> arg)
   Prefetch(arg.begin(), arg.end());
 }
 
+/*!
+ * \brief Calculate memory alignment.
+ * @param x     - Size of memory to align.
+ * @param a     - Size of alignment to follow.
+ * @return      - Aligned size.
+ */
 static inline size_t Align(size_t x, size_t a = 16)
 {
-  return a * ((x - 1) / a + 1);
+    return a * ((x - 1) / a + 1);
 }
 
 }

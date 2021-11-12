@@ -93,6 +93,8 @@ int main(int argc, char *argv[])
 
   auto client = EpochClient::g_workload_client;
   logger->info("Generating Benchmarks...");
+
+  // generate transactions for the benchmark
   client->GenerateBenchmarks();
 
   console.UpdateServerStatus(Console::ServerStatus::Listening);

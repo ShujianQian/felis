@@ -9,39 +9,44 @@ constexpr auto kPerTxnHashSize = 16;
 
 CommitBuffer::CommitBuffer()
 {
-  ref_hashtable_size = EpochClient::g_txn_per_epoch * kPerTxnHashSize;
-  ref_hashtable = (std::atomic<Entry *> *) mem::AllocMemory(
-      mem::MemAllocType::GenericMemory, ref_hashtable_size * sizeof(Entry *));
-  dup_hashtable_size = EpochClient::g_txn_per_epoch;
-  dup_hashtable = (std::atomic<Entry *> *) mem::AllocMemory(
-      mem::MemAllocType::GenericMemory, dup_hashtable_size * sizeof(Entry *));
-  clear_refcnt = NodeConfiguration::g_nr_threads;
+    ref_hashtable_size = EpochClient::g_txn_per_epoch * kPerTxnHashSize;
+    ref_hashtable = (std::atomic<Entry *> *) mem::AllocMemory(mem::MemAllocType::GenericMemory,
+                                                              ref_hashtable_size * sizeof(Entry *));
+    dup_hashtable_size = EpochClient::g_txn_per_epoch;
+    dup_hashtable = (std::atomic<Entry *> *) mem::AllocMemory(mem::MemAllocType::GenericMemory,
+                                                              dup_hashtable_size * sizeof(Entry *));
+    clear_refcnt = NodeConfiguration::g_nr_threads;
 
-  for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
-    auto lmt = EpochClient::g_txn_per_epoch * 6_K / NodeConfiguration::g_nr_threads;
-    int numa_node = i / mem::kNrCorePerNode;
-    entbrks[i] = mem::Brk::New(
-        mem::AllocMemory(mem::MemAllocType::GenericMemory, lmt, numa_node), lmt);
-    entbrks[i]->set_thread_safe(false);
-  }
+    for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
+        auto lmt = EpochClient::g_txn_per_epoch * 6_K / NodeConfiguration::g_nr_threads;
+        int numa_node = i / mem::kNrCorePerNode;
+        entbrks[i] = mem::Brk::New(mem::AllocMemory(mem::MemAllocType::GenericMemory, lmt, numa_node), lmt);
+        entbrks[i]->set_thread_safe(false);
+    }
 }
 
 void CommitBuffer::Clear(int core_id)
 {
-  if (clear_refcnt.load() == 0)
-    return;
-  auto tot_threads = NodeConfiguration::g_nr_threads;
-  long start, end;
-  start = ref_hashtable_size * core_id / tot_threads;
-  end = ref_hashtable_size * (core_id + 1) / tot_threads;
-  memset(ref_hashtable + start, 0, (end - start) * sizeof(Entry *));
+    // return if all cleared
+    if (clear_refcnt.load() == 0)
+        return;
 
-  start = dup_hashtable_size * core_id / tot_threads;
-  end = dup_hashtable_size * (core_id + 1) / tot_threads;
-  memset(dup_hashtable + start, 0, (end - start) * sizeof(Entry *));
+    // clear the hashtables for the current core
+    auto tot_threads = NodeConfiguration::g_nr_threads;
+    long start, end;
+    start = ref_hashtable_size * core_id / tot_threads;
+    end = ref_hashtable_size * (core_id + 1) / tot_threads;
+    memset(ref_hashtable + start, 0, (end - start) * sizeof(Entry *));
 
-  clear_refcnt.fetch_sub(1);
-  entbrks[core_id]->Reset();
+    start = dup_hashtable_size * core_id / tot_threads;
+    end = dup_hashtable_size * (core_id + 1) / tot_threads;
+    memset(dup_hashtable + start, 0, (end - start) * sizeof(Entry *));
+
+    // decrement the clear reference count
+    clear_refcnt.fetch_sub(1);
+
+
+    entbrks[core_id]->Reset();
 }
 
 void CommitBuffer::Reset()
@@ -51,8 +56,9 @@ void CommitBuffer::Reset()
 
 void CommitBuffer::EnsureReady()
 {
-  while (clear_refcnt.load() != 0)
-    _mm_pause();
+    // spin until ready
+    while (clear_refcnt.load() != 0)
+        _mm_pause();
 }
 
 bool CommitBuffer::AddRef(int core_id, VHandle *vhandle, uint64_t sid)

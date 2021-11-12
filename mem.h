@@ -393,54 +393,122 @@ class ParallelRegion {
 
 ParallelRegion &GetDataRegion();
 
+/*!
+ * \brief Pre-allocated contiguous memory segment manager.
+ */
 class Brk {
-  std::atomic_size_t offset;
-  size_t limit;
-  uint8_t *data;
+    std::atomic_size_t offset;
+    size_t limit;
+    uint8_t *data;
+    bool thread_safe;
 
-  bool thread_safe;
+public:
+    /*!
+     * \brief Default constructor.
+     */
+    Brk() : offset(0), limit(0), data(nullptr), thread_safe(false)
+    {}
 
- public:
-  Brk() : offset(0), limit(0), data(nullptr), thread_safe(false) {}
-  Brk(void *p, size_t limit) : offset(0), limit(limit), data((uint8_t *) p), thread_safe(false) {}
-  ~Brk() {}
+    /*!
+     * \brief Constructor.
+     * @param p
+     * @param limit
+     */
+    Brk(void *p, size_t limit) : offset(0), limit(limit), data((uint8_t *) p), thread_safe(false)
+    {}
 
-  Brk(Brk &&rhs) {
-    data = rhs.data;
-    limit = rhs.limit;
-    offset.store(rhs.offset.load(std::memory_order_relaxed), std::memory_order_relaxed);
-    thread_safe = rhs.thread_safe;
+    /*!
+     * \brief Default destructor.
+     */
+    ~Brk()
+    {}
 
-    rhs.offset = 0;
-    rhs.limit = 0;
-    rhs.data = nullptr;
-  }
+    /*!
+     * \brief Copy constructor.
+     * @param rhs
+     */
+    Brk(Brk &&rhs)
+    {
+        data = rhs.data;
+        limit = rhs.limit;
+        offset.store(rhs.offset.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        thread_safe = rhs.thread_safe;
 
-  Brk &operator =(Brk &&rhs) {
-    if (this != &rhs) {
-      this->~Brk();
-      new (this) Brk(std::move(rhs));
+        rhs.offset = 0;
+        rhs.limit = 0;
+        rhs.data = nullptr;
     }
-    return *this;
-  }
 
-  void set_thread_safe(bool safe) {
-    thread_safe = safe;
-  }
+    /*!
+     * \brief Assignment operator.
+     * @param rhs
+     * @return
+     */
+    Brk &operator=(Brk &&rhs)
+    {
+        if (this != &rhs) {
+            this->~Brk();
+            new(this) Brk(std::move(rhs));
+        }
+        return *this;
+    }
 
-  // This is a special New() function. It avoids memory allocation.
-  static Brk *New(void *buf, size_t sz) {
-    auto *p = (uint8_t *) buf;
-    auto hdr_size = util::Align(sizeof(Brk), 16);
-    return new (p) Brk(p + hdr_size, sz - hdr_size);
-  }
+    /*!
+     * \brief Setter of thread_safe.
+     * @param safe
+     */
+    void set_thread_safe(bool safe)
+    {
+        thread_safe = safe;
+    }
 
-  bool Check(size_t s) { return offset + s <= limit; }
-  void Reset() { offset = 0; }
+    /*!
+     * \brief Static construction function that avoids memory allocation.
+     * @param buf   - Pre-allocated memory.
+     * @param sz    - Buffer size.
+     * @return      - Pointer to newly constructed Brk object.
+     */
+    static Brk *New(void *buf, size_t sz)
+    {
+        auto *p = (uint8_t *) buf;
+        auto hdr_size = util::Align(sizeof(Brk), 16);
+        return new(p) Brk(p + hdr_size, sz - hdr_size);
+    }
 
-  void *Alloc(size_t s);
-  uint8_t *ptr() const { return data; }
-  size_t current_size() const { return offset; }
+    /*!
+     * \brief Checks that whether current brk will overflow with new allocation.
+     * @param s     - Size of new allocation.
+     * @return      - true if allocation will succeed.
+     */
+    bool Check(size_t s)
+    { return offset + s <= limit; }
+
+    /*!
+     * \brief Resets brk and clear the offset pointer.
+     */
+    void Reset()
+    { offset = 0; }
+
+    /*!
+     * \brief Allocate memory from the pre-allocated memory segment.
+     * @param s     - Size of the new allocation.
+     * @return      - Pointer to the start of the newly allocated memory.
+     */
+    void *Alloc(size_t s);
+
+    /*!
+     * \brief Get the pointer to the beginning of data segment.
+     * @return      - Pointer to the start of the data segment.
+     */
+    uint8_t *ptr() const
+    { return data; }
+
+    /*!
+     * \brief Get the size of currently allocated memory.
+     * @return      - Total size of currently allocated segments.
+     */
+    size_t current_size() const
+    { return offset; }
 };
 
 #define NewStackBrk(sz) mem::Brk::New(alloca(sz), sz)
@@ -450,8 +518,22 @@ void *AllocFromRoutine(size_t sz);
 
 PoolStatistics GetMemStats(MemAllocType alloc_type);
 void PrintMemStats();
+
+/*!
+ * \brief Allocate memory using custom allocator.
+ * @param alloc_type    - Type of allocation.
+ * @param length        - Size of memory to allocated.
+ * @param numa_node     - NUMA node to bind memory to.
+ * @param on_demand     - Whether memory can be swapped out on demand.
+ * @return              - Pointer to the allocated memory. nullptr if allocation failed.
+ */
 void *AllocMemory(mem::MemAllocType alloc_type, size_t length,
                   int numa_node = -1, bool on_demand = false);
+
+/*!
+ * \brief Get total memory allocated with all types.
+ * @return      - Total size of memory allocated.
+ */
 long TotalMemoryAllocated();
 
 }

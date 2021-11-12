@@ -117,82 +117,96 @@ long EpochClient::WaitCountPerMS()
 static ThresholdAutoTuneController g_threshold_autotune;
 
 EpochClient::EpochClient()
-    : control(this),
-      callback(EpochCallback(this)),
-      completion(0, callback),
-      conf(util::Instance<NodeConfiguration>())
+        : control(this),
+          callback(EpochCallback(this)),
+          completion(0, callback),
+          conf(util::Instance<NodeConfiguration>())
 {
-  callback.perf.End();
+    callback.perf.End();
 
-  best_core = std::numeric_limits<int>::max();
-  best_duration = std::numeric_limits<int>::max();
-  core_limit = conf.g_nr_threads;
+    best_core = std::numeric_limits<int>::max();
+    best_duration = std::numeric_limits<int>::max();
+    core_limit = conf.g_nr_threads;
 
-  auto cnt_len = conf.nr_nodes() * conf.nr_nodes() * PromiseRoutineTransportService::kPromiseMaxLevels;
-  unsigned long *cnt_mem = nullptr;
-  EpochWorkers *workers_mem = nullptr;
+    auto cnt_len = conf.nr_nodes() * conf.nr_nodes() * PromiseRoutineTransportService::kPromiseMaxLevels;
+    unsigned long *cnt_mem = nullptr;
+    EpochWorkers *workers_mem = nullptr;
 
-  for (int t = 0; t < NodeConfiguration::g_nr_threads; t++) {
-    auto d = std::div(t, mem::kNrCorePerNode);
-    auto numa_node = d.quot;
-    auto numa_offset = d.rem;
-    if (numa_offset == 0) {
-      cnt_mem = (unsigned long *) mem::AllocMemory(
-          mem::Epoch,
-          cnt_len * sizeof(unsigned long) * mem::kNrCorePerNode,
-          numa_node);
-      workers_mem = (EpochWorkers *) mem::AllocMemory(
-          mem::Epoch,
-          sizeof(EpochWorkers) * mem::kNrCorePerNode,
-          numa_node);
+    for (int t = 0; t < NodeConfiguration::g_nr_threads; t++) {
+        auto d = std::div(t, mem::kNrCorePerNode);
+        auto numa_node = d.quot;
+        auto numa_offset = d.rem;
+        if (numa_offset == 0) {
+            cnt_mem = (unsigned long *) mem::AllocMemory(
+                    mem::Epoch,
+                    cnt_len * sizeof(unsigned long) * mem::kNrCorePerNode,
+                    numa_node);
+            workers_mem = (EpochWorkers *) mem::AllocMemory(
+                    mem::Epoch,
+                    sizeof(EpochWorkers) * mem::kNrCorePerNode,
+                    numa_node);
+        }
+        per_core_cnts[t] = cnt_mem + cnt_len * numa_offset;
+        workers[t] = new(workers_mem + numa_offset) EpochWorkers(t, this);
     }
-    per_core_cnts[t] = cnt_mem + cnt_len * numa_offset;
-    workers[t] = new (workers_mem + numa_offset) EpochWorkers(t, this);
-  }
 
-  if (Options::kCoreScaling) {
-    long wc = WaitCountPerMS();
-    g_corescaling_threshold = Options::kCoreScaling.ToInt() * wc / 100;
-    logger->info("WaitCount per ms {} , calculated CoreScaling threshold {}",
-                 wc, g_corescaling_threshold);
-  }
+    if (Options::kCoreScaling) {
+        long wc = WaitCountPerMS();
+        g_corescaling_threshold = Options::kCoreScaling.ToInt() * wc / 100;
+        logger->info("WaitCount per ms {} , calculated CoreScaling threshold {}",
+                     wc, g_corescaling_threshold);
+    }
 
-  if (Options::kOnDemandSplitting) {
-    g_splitting_threshold = Options::kOnDemandSplitting.ToInt();
-  }
+    if (Options::kOnDemandSplitting) {
+        g_splitting_threshold = Options::kOnDemandSplitting.ToInt();
+    }
 
-  commit_buffer = new CommitBuffer();
+    commit_buffer = new CommitBuffer();
 }
 
 EpochTxnSet::EpochTxnSet()
 {
-  auto nr_threads = NodeConfiguration::g_nr_threads;
-  auto d = std::div((int) EpochClient::g_txn_per_epoch, nr_threads);
-  for (auto t = 0; t < nr_threads; t++) {
-    size_t nr = d.quot;
-    if (t < d.rem) nr++;
-    auto numa_node = t / mem::kNrCorePerNode;
-    auto p = mem::AllocMemory(mem::Txn, (nr + 1) * sizeof(BaseTxn *), numa_node);
-    per_core_txns[t] = new (p) TxnSet(nr);
-  }
+    auto nr_threads = NodeConfiguration::g_nr_threads;
+    auto d = std::div((int) EpochClient::g_txn_per_epoch, nr_threads);
+
+    for (auto t = 0; t < nr_threads; t++) {
+        size_t nr = d.quot;     // number of transactions in this epoch
+        if (t < d.rem) nr++;
+
+        auto numa_node = t / mem::kNrCorePerNode;
+
+        // allocate c array for the transactions in the current epoch and bind memory to numa_node
+        auto p = mem::AllocMemory(mem::Txn, (nr + 1) * sizeof(BaseTxn *), numa_node);
+
+        // construct TxnSet on allocated memory
+        per_core_txns[t] = new(p) TxnSet(nr);
+    }
 }
 
 EpochTxnSet::~EpochTxnSet()
 {
-  // TODO: free these pointers via munmap().
+    // TODO: free these pointers via munmap().
 }
 
 void EpochClient::GenerateBenchmarks()
 {
+    // construct EpochTxnSet for each epoch
     all_txns = new EpochTxnSet[g_max_epoch - 1];
+
     for (auto i = 1; i < g_max_epoch; i++) {
         // for each of the transactions to run in one epoch
         for (uint64_t j = 1; j <= NumberOfTxns(); j++) {
             // evenly distribute the transactions to each thread
 
             auto d = std::div((int) (j - 1), NodeConfiguration::g_nr_threads);
+
+            // t    - the thread to process the transaction
             auto t = d.rem, pos = d.quot;
+
+            // set the NUMA node of the current transaction
             BaseTxn::g_cur_numa_node = t / mem::kNrCorePerNode;
+
+            // create transaction and store in the corresponding TxnSet
             all_txns[i - 1].per_core_txns[t]->txns[pos] = CreateTxn(GenerateSerialId(i, j));
         }
     }

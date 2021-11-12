@@ -15,7 +15,13 @@
 
 namespace mem {
 
+/*!
+ * \brief Globally available memory tracker.
+ *
+ * Updated each time memory is allocated to track memory usage.
+ */
 static std::atomic_llong g_mem_tracker[NumMemTypes];
+
 static std::mutex g_ps_lock;
 static std::vector<PoolStatistics *> g_ps[NumMemTypes];
 
@@ -612,21 +618,28 @@ ParallelRegion &GetDataRegion() { return g_data_region; }
 
 void *Brk::Alloc(size_t s)
 {
-  s = util::Align(s, 16);
-  size_t off = 0;
-  if (!thread_safe) {
-    off = offset.load(std::memory_order_relaxed);
-    offset.store(off + s, std::memory_order_relaxed);
-  } else {
-    off = offset.fetch_add(s, std::memory_order_seq_cst);
-  }
+    // allocated 16 byte aligned memory
+    s = util::Align(s, 16);
 
-  if (__builtin_expect(off + s > limit, 0)) {
-    fprintf(stderr, "Brk of limit %lu is not large enough!\n", limit);
-    std::abort();
-  }
-  uint8_t *p = data + off;
-  return p;
+    size_t off = 0;
+    if (!thread_safe) {
+        // thread safe not required
+        off = offset.load(std::memory_order_relaxed);
+        offset.store(off + s, std::memory_order_relaxed);
+    } else {
+        // thread safe required
+        off = offset.fetch_add(s, std::memory_order_seq_cst);
+    }
+
+    // segment size grew over limit
+    if (__builtin_expect(off + s > limit, 0)) {
+        fprintf(stderr, "Brk of limit %lu is not large enough!\n", limit);
+        std::abort();
+    }
+
+    // pointer to newly grew area
+    uint8_t *p = data + off;
+    return p;
 }
 
 static Brk *BrkFromRoutine()
@@ -700,14 +713,17 @@ void PrintMemStats() {
 
 void *AllocMemory(mem::MemAllocType alloc_type, size_t length, int numa_node, bool on_demand)
 {
-  void *p = util::OSMemory::g_default.Alloc(length, numa_node, on_demand);
-  if (p == nullptr) {
-    printf("Allocation of %s failed\n", MemTypeToString(alloc_type).c_str());
-    PrintMemStats();
-    return nullptr;
-  }
-  g_mem_tracker[alloc_type].fetch_add(length);
-  return p;
+    // allocate memory using custom allocator
+    void *p = util::OSMemory::g_default.Alloc(length, numa_node, on_demand);
+    if (p == nullptr) {
+        printf("Allocation of %s failed\n", MemTypeToString(alloc_type).c_str());
+        PrintMemStats();
+        return nullptr;
+    }
+
+    // add allocated size to the global memory tracker
+    g_mem_tracker[alloc_type].fetch_add(length);
+    return p;
 }
 
 #if 0
@@ -772,11 +788,11 @@ void *MemMap(MemAllocType alloc_type, void *addr, size_t length, int prot, int f
 
 long TotalMemoryAllocated()
 {
-  long s = 0;
-  for (auto i = 0; i < NumMemTypes; i++) {
-    s += g_mem_tracker[i].load();
-  }
-  return s;
+    long s = 0;
+    for (auto i = 0; i < NumMemTypes; i++) {
+        s += g_mem_tracker[i].load();
+    }
+    return s;
 }
 
 }

@@ -21,6 +21,9 @@ class EpochClient;
 
 using UpdateForKeyCallback = void (*)(VHandle *row, void *ctx);
 
+/*!
+ * \brief Base Transaction.
+ */
 class BaseTxn {
  protected:
   friend class EpochClient;
