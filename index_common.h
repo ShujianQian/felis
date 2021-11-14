@@ -99,7 +99,9 @@ class Table {
   // IndexBackend will implement these
   virtual VHandle *SearchOrCreate(const VarStrView &k, bool *created) { return nullptr; }
   virtual VHandle *SearchOrCreate(const VarStrView &k) { return nullptr; }
-  virtual VHandle *Search(const VarStrView &k) { return nullptr; }
+  virtual VHandle *Search(const VarStrView &k, uint64_t sid = 0) { return nullptr; }
+  virtual VHandle *PriorityInsert(const VarStr *k, uint64_t sid) { std::abort(); }
+
   virtual Table::Iterator *IndexSearchIterator(const VarStrView &start) {
     return nullptr;
   }

@@ -6,7 +6,7 @@
 #include "slice.h"
 #include "index.h"
 
-#include "zipfian_random.h"
+#include "benchmark/ycsb/zipfian_random.h"
 
 namespace ycsb {
 
@@ -36,6 +36,7 @@ class Client : public felis::EpochClient {
   RandRng rand;
 
   friend class RMWTxn;
+  friend class MWTxn;
   static char zero_data[100];
  public:
   static double g_theta;

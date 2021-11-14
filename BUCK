@@ -10,6 +10,9 @@ tpcc_headers = [
     'benchmark/tpcc/delivery.h',
     'benchmark/tpcc/order_status.h',
     'benchmark/tpcc/stock_level.h',
+    'benchmark/tpcc/tpcc_priority.h',
+    'benchmark/tpcc/pri_stock.h',
+    'benchmark/tpcc/pri_new_order_delivery.h',
 ]
 
 tpcc_srcs = [
@@ -20,16 +23,21 @@ tpcc_srcs = [
     'benchmark/tpcc/delivery.cc',
     'benchmark/tpcc/order_status.cc',
     'benchmark/tpcc/stock_level.cc',
+    'benchmark/tpcc/tpcc_priority.cc',
+    'benchmark/tpcc/pri_stock.cc',
+    'benchmark/tpcc/pri_new_order_delivery.cc',
 ]
 
 ycsb_headers = [
     'benchmark/ycsb/table_decl.h',
     'benchmark/ycsb/ycsb.h',
+    'benchmark/ycsb/ycsb_priority.h',
 ]
 
 ycsb_srcs = [
     'benchmark/ycsb/ycsb.cc',
     'benchmark/ycsb/ycsb_workload.cc',
+    'benchmark/ycsb/ycsb_priority.cc',
 ]
 
 db_headers = [
@@ -40,7 +48,8 @@ db_headers = [
     'commit_buffer.h', 'shipping.h', 'completion.h', 'entity.h',
     'slice.h', 'vhandle_cch.h', 'tcp_node.h',
     'util/arch.h', 'util/factory.h', 'util/linklist.h', 'util/locks.h', 'util/lowerbound.h', 'util/objects.h', 'util/random.h', 'util/types.h',
-    'pwv_graph.h'
+    'pwv_graph.h',
+    'priority.h',
 ]
 
 db_srcs = [
@@ -50,6 +59,7 @@ db_srcs = [
     'node_config.cc', 'console.cc', 'console_client.cc',
     'commit_buffer.cc', 'shipping.cc', 'entity.cc', 'iface.cc', 'slice.cc', 'tcp_node.cc',
     'felis_probes.cc',
+    'priority.cc',
     'json11/json11.cpp',
     'spdlog/src/spdlog.cpp', 'spdlog/src/fmt.cpp', 'spdlog/src/stdout_sinks.cpp', 'spdlog/src/async.cpp', 'spdlog/src/cfg.cpp', 'spdlog/src/color_sinks.cpp', 'spdlog/src/file_sinks.cpp',
     'xxHash/xxhash.c', 'util/os_linux.cc', 'util/locks.cc',

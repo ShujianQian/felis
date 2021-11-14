@@ -90,6 +90,48 @@ struct Options {
   static inline const auto kEnablePWV = Option("EnablePWV", false);
   static inline const auto kPWVGraphAlloc = Option("PWVGraphAlloc");
 
+
+  static inline const auto kPriorityTxn = Option("PriorityTxn");
+
+  static inline const auto kPercentagePriorityTxn = Option("PercentagePriorityTxn");
+  static inline const auto kNrPriorityTxn = Option("NrPriorityTxn");
+  static inline const auto kIntervalPriorityTxn = Option("IntervalPriorityTxn");
+  static inline const auto kIncomingRate = Option("IncomingRate");
+
+  static inline const auto kSlotPercentage = Option("SlotPercentage");
+  static inline const auto kStripBatched = Option("StripBatched");
+  static inline const auto kStripPriority = Option("StripPriority");
+  static inline const auto kSIDGlobalInc = Option("SIDGlobalInc");
+  static inline const auto kSIDLocalInc = Option("SIDLocalInc");
+  static inline const auto kSIDBitmap = Option("SIDBitmap");
+  static inline const auto kTicTocMode = Option("TicTocMode");
+
+  static inline const auto kReadBit = Option("ReadBit");
+  static inline const auto kConflictReadBit = Option("ConflictReadBit");
+  static inline const auto kSIDReadBit = Option("SIDReadBit");
+  static inline const auto kSIDForwardReadBit = Option("SIDForwardReadBit");
+  static inline const auto kRowRTS = Option("RowRTS");
+  static inline const auto kConflictRowRTS = Option("ConflictRowRTS");
+  static inline const auto kSIDRowRTS = Option("SIDRowRTS");
+  static inline const auto kLastVersionPatch = Option("LastVersionPatch");
+
+  static inline const auto kDist = Option("Dist");
+  static inline const auto kExpLambda = Option("ExpLambda");
+  static inline const auto kProgressBackoff = Option("ProgressBackoff");
+  static inline const auto kExpDistriBackoff = Option("ExpDistriBackoff");
+  static inline const auto kExpBackoff = Option("ExpBackoff");
+  static inline const auto kRateBackoff = Option("RateBackoff");
+  static inline const auto kLockInsert = Option("LockInsert");
+  static inline const auto kHybridInsert = Option("HybridInsert");
+  static inline const auto kReturnBit = Option("ReturnBit");
+  static inline const auto kSIDRowWTS = Option("SIDRowWTS");
+
+  static inline const auto kFastestCore = Option("FastestCore"); // issue piece on fastest core
+  static inline const auto kNoPriorityPreempt = Option("NoPriorityPreempt");
+  static inline const auto kNoTpccPin = Option("NoTpccPin");
+
+  static inline const auto kPriorityBatchMode = Option("PriorityBatchMode");
+
   static inline bool ParseExtentedOptions(std::string arg)
   {
     for (auto o: Option::g_options) {

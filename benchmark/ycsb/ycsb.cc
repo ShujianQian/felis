@@ -3,6 +3,7 @@
 #include "txn_cc.h"
 #include "pwv_graph.h"
 #include "util/os.h"
+#include "util/random.h"
 
 namespace ycsb {
 
@@ -274,6 +275,201 @@ void RMWTxn::Run()
   }
 }
 
+static constexpr int kMWTotal = 2;
+
+struct MWStruct {
+  uint64_t keys[kMWTotal];
+};
+
+struct MWState {
+  VHandle *rows[kMWTotal];
+  InvokeHandle<MWState> futures[kMWTotal];
+
+  struct LookupCompletion : public TxnStateCompletion<MWState> {
+    void operator()(int id, BaseTxn::LookupRowResult rows) {
+      state->rows[id] = rows[0];
+      handle(rows[0]).AppendNewVersion(0);
+    }
+  };
+  uint64_t init_tsc;
+  uint64_t exec_tsc;
+  uint64_t sid;
+  std::atomic_int piece_exec_cnt;
+  std::atomic_int piece_init_cnt;
+};
+
+template <>
+MWStruct Client::GenerateTransactionInput<MWStruct>()
+{
+  MWStruct s;
+
+  int nr_lsb = 63 - __builtin_clzll(g_table_size) - kNrMSBContentionKey;
+  size_t mask = 0;
+  if (nr_lsb > 0) mask = (1 << nr_lsb) - 1;
+
+  for (int i = 0; i < kMWTotal; i++) {
+ again:
+    s.keys[i] = rand.next() % g_table_size;
+    if (i < g_contention_key) {
+      s.keys[i] &= ~mask;
+    } else {
+      if ((s.keys[i] & mask) == 0)
+        goto again;
+    }
+    for (int j = 0; j < i; j++)
+      if (s.keys[i] == s.keys[j])
+        goto again;
+  }
+
+  return s;
+}
+
+class MWTxn : public Txn<MWState>, public MWStruct {
+  Client *client;
+ public:
+  MWTxn(Client *client, uint64_t serial_id);
+  void Run() override final;
+  void Prepare() override final;
+  void PrepareInsert() override final {}
+  static void WriteRow(TxnRow vhandle);
+  static void ReadRow(TxnRow vhandle);
+
+  template <typename Func>
+  void RunOnPartition(Func f) {
+    auto handle = index_handle();
+    for (int i = 0; i < kMWTotal; i++) {
+      auto part = (keys[i] * NodeConfiguration::g_nr_threads) / Client::g_table_size;
+      f(part, root, Tuple<unsigned long, int, decltype(state), decltype(handle), int>(keys[i], i, state, handle, part));
+    }
+  }
+};
+
+MWTxn::MWTxn(Client *client, uint64_t serial_id)
+    : Txn<MWState>(serial_id),
+      MWStruct(client->GenerateTransactionInput<MWStruct>()),
+      client(client)
+{}
+
+void MWTxn::Prepare()
+{
+  if (!VHandleSyncService::g_lock_elision) {
+    Ycsb::Key dbk[kMWTotal];
+    for (int i = 0; i < kMWTotal; i++) dbk[i].k = keys[i];
+    INIT_ROUTINE_BRK(8192);
+
+    // Omit the return value because this workload is totally single node
+    TxnIndexLookup<DummySliceRouter, MWState::LookupCompletion, void>(
+        nullptr,
+        KeyParam<Ycsb>(dbk, kMWTotal));
+  } else {
+    state->piece_init_cnt = 0;
+    state->sid = this->serial_id();
+    static constexpr auto LookupIndex = [](auto k, int i, auto state, auto handle) {
+      auto &rel = util::Instance<TableManager>().Get<ycsb::Ycsb>();
+      Ycsb::Key dbk;
+      dbk.k = k;
+      void *buf = alloca(512);
+      state->rows[i] = rel.Search(dbk.EncodeView(buf));
+      handle(state->rows[i]).AppendNewVersion();
+    };
+    RunOnPartition(
+        [this](auto part, auto root, const auto &t) {
+          root->AttachRoutine(
+              t, 1, // Always on the local node.
+              [](auto &ctx) {
+                auto [k, i, state, handle, part] = ctx;
+                auto cnt = state->piece_init_cnt.fetch_add(1);
+                if (cnt == 0)
+                  state->init_tsc = __rdtsc();
+                LookupIndex(k, i, state, handle);
+
+                if (cnt == 1) {
+                  auto tsc = __rdtsc();
+                  state->init_tsc = (tsc > state->init_tsc) ? tsc - state->init_tsc : 0;
+                  if (state->init_tsc / 2200 < 100000)
+                    probes::PriInitTime{state->init_tsc / 2200, 0, 0, state->sid}();
+                }
+              },
+              part); // Partitioning affinity.
+        });
+
+  }
+}
+
+void MWTxn::WriteRow(TxnRow vhandle)
+{
+  auto dbv = vhandle.Read<Ycsb::Value>();
+  dbv.v.assign(Client::zero_data, 100);
+  dbv.v.resize_junk(999);
+  vhandle.Write(dbv);
+}
+
+void MWTxn::ReadRow(TxnRow vhandle)
+{
+  vhandle.Read<Ycsb::Value>();
+}
+
+void MWTxn::Run()
+{
+  if (!Options::kEnablePartition) {
+    auto bitmap = 1ULL << (kMWTotal);
+    for (int i = 0; i < kMWTotal; i++) {
+      state->futures[i] = UpdateForKey(
+          1, state->rows[i],
+          [](const auto &ctx, VHandle *row) {
+            auto &[state, index_handle] = ctx;
+            WriteRow(index_handle(row));
+          });
+
+      if (state->futures[i].has_callback())
+        bitmap |= 1ULL << i;
+    }
+
+    auto aff = std::numeric_limits<uint64_t>::max();
+    root->AttachRoutine(
+        MakeContext(), 1,
+        [](const auto &ctx) {
+          auto &[state, index_handle] = ctx;
+          for (int i = 0; i < kMWTotal; i++) {
+            state->futures[i].Invoke(state, index_handle);
+          }
+        },
+        aff);
+
+  } else if (Client::g_enable_granola) {
+    state->piece_exec_cnt = 0;
+    RunOnPartition(
+        [this](auto part, auto root, const auto &t) {
+          root->AttachRoutine(
+              t, 1,
+              [](auto &ctx) {
+                auto &[k, i, state, handle, _part] = ctx;
+                auto cnt = state->piece_exec_cnt.fetch_add(1);
+                if (cnt == 0)
+                  state->exec_tsc = __rdtsc();
+
+                TxnRow vhandle = handle(state->rows[i]);
+                auto dbv = vhandle.Read<Ycsb::Value>();
+
+                static thread_local volatile char buffer[100];
+                std::copy(dbv.v.data(), dbv.v.data() + 100, buffer);
+                dbv.v.resize_junk(90);
+                vhandle.Write(dbv);
+
+                if (cnt == 1) {
+                  uint64_t tsc = __rdtsc();
+                  uint64_t exec = (tsc > state->exec_tsc) ? tsc - state->exec_tsc : 0;
+                  uint64_t total = exec + state->init_tsc;
+                  if (total / 2200 < 100000)
+                    probes::PriExecTime{exec / 2200, total / 2200, state->sid}();
+                }
+              },
+              part);
+        });
+
+  }
+}
+
 void YcsbLoader::Run()
 {
   auto &mgr = util::Instance<felis::TableManager>();
@@ -340,6 +536,12 @@ Client::Client() noexcept
 
 BaseTxn *Client::CreateTxn(uint64_t serial_id)
 {
+  auto x_pct = NodeConfiguration::g_priority_batch_mode_pct;
+  util::FastRandom r(__rdtsc());
+  int rd = r.next_u32() % (100 + x_pct);
+  if (x_pct && rd >= 100) {
+    return new MWTxn(this, serial_id);
+  }
   return new RMWTxn(this, serial_id);
 }
 

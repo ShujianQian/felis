@@ -9,6 +9,7 @@
 #include "masstree/kvthread.hh"
 #include "masstree/timestamp.hh"
 #include "masstree/masstree.hh"
+#include "masstree/masstree_struct.hh"
 
 volatile mrcu_epoch_type active_epoch;
 volatile mrcu_epoch_type globalepoch = 1;
@@ -116,14 +117,31 @@ VHandle *MasstreeIndex::SearchOrCreate(const VarStrView &k, bool *created)
   return SearchOrCreateImpl(k, [=]() { *created = true; return NewRow(); });
 }
 
-VHandle *MasstreeIndex::Search(const VarStrView &k)
+VHandle *MasstreeIndex::Search(const VarStrView &k, uint64_t sid)
 {
   auto ti = GetThreadInfo();
   VHandle *result = nullptr;
-  get_map()->get(lcdf::Str(k.data(), k.length()), result, *ti);
+  get_map()->get(lcdf::Str(k.data(), k.length()), result, *ti, sid);
   return result;
 }
 
+VHandle *MasstreeIndex::PriorityInsert(const VarStr *k, uint64_t sid)
+{
+  auto ti = GetThreadInfo();
+  typename MasstreeMap::unlocked_cursor_type ucursor(*get_map(), lcdf::Str(k->data(), k->length()));
+  bool found = ucursor.find_unlocked(*ti);
+  if (found || ucursor.node()->read_sid > sid || ucursor.node()->write_sid > sid)
+    return nullptr; // mechanism C, D, E, F
+
+  typename MasstreeMap::cursor_type cursor(*get_map(), k->data(), k->length());
+  found = cursor.find_insert(*ti);
+  assert(!found);
+  cursor.value() = (VHandle *) VHandle::New();
+  VHandle *result = cursor.value();
+  cursor.finish(1, *ti);
+  assert(result != nullptr);
+  return result;
+}
 
 static thread_local threadinfo *TLSThreadInfo;
 

@@ -1,6 +1,7 @@
 #include "table_decl.h"
 
 #include "tpcc.h"
+#include "benchmark/tpcc/tpcc_priority.h"
 #include "epoch.h"
 #include "log.h"
 #include "util/objects.h"
@@ -15,6 +16,8 @@
 #include "delivery.h"
 #include "stock_level.h"
 #include "order_status.h"
+#include "pri_stock.h"
+#include "pri_new_order_delivery.h"
 
 using util::MixIn;
 using util::Instance;
@@ -39,6 +42,14 @@ template <> struct FactoryTag<tpcc::TxnType, tpcc::TxnType::OrderStatus> {
 
 template <> struct FactoryTag<tpcc::TxnType, tpcc::TxnType::StockLevel> {
   using Type = tpcc::StockLevelTxn;
+};
+
+template <> struct FactoryTag<tpcc::TxnType, tpcc::TxnType::PriStock> {
+  using Type = tpcc::PriStockTxn;
+};
+
+template <> struct FactoryTag<tpcc::TxnType, tpcc::TxnType::PriNewOrderDelivery> {
+  using Type = tpcc::PriNewOrderDeliveryTxn;
 };
 
 }
@@ -101,6 +112,7 @@ class TPCCModule : public Module<WorkloadModule> {
     LoadTPCCDataSet();
 
     tpcc::TxnFactory::Initialize();
+    tpcc::GeneratePriorityTxn();
 
     EpochClient::g_workload_client = new tpcc::Client();
   }

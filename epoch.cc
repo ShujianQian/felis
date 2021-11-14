@@ -16,6 +16,7 @@
 #include "gc.h"
 #include "opts.h"
 #include "commit_buffer.h"
+#include "priority.h"
 
 #include "literals.h"
 #include "util/os.h"
@@ -185,11 +186,29 @@ EpochTxnSet::EpochTxnSet()
 
 EpochTxnSet::~EpochTxnSet()
 {
-    // TODO: free these pointers via munmap().
+  // TODO: free these pointers via munmap().
 }
 
 void EpochClient::GenerateBenchmarks()
 {
+  all_txns = new EpochTxnSet[g_max_epoch - 1];
+  size_t batched, priority;
+  if (NodeConfiguration::g_priority_txn) {
+    batched = PriorityTxnService::g_strip_batched;
+    priority = PriorityTxnService::g_strip_priority;
+  }
+  for (auto i = 1; i < g_max_epoch; i++) {
+    for (uint64_t j = 1; j <= NumberOfTxns(); j++) {
+      auto d = std::div((int)(j - 1), NodeConfiguration::g_nr_threads);
+      auto t = d.rem, pos = d.quot;
+      BaseTxn::g_cur_numa_node = t / mem::kNrCorePerNode;
+      uint64_t seq = j;
+      if (NodeConfiguration::g_priority_txn) {
+        seq = j + (j-1)/batched * priority;
+      }
+      all_txns[i - 1].per_core_txns[t]->txns[pos] = CreateTxn(GenerateSerialId(i, seq));
+    }
+  }
     // construct EpochTxnSet for each epoch
     all_txns = new EpochTxnSet[g_max_epoch - 1];
 
@@ -463,6 +482,16 @@ void EpochClient::OnInitializeComplete()
 void EpochClient::OnExecuteComplete()
 {
   stats.execution_time_ms += callback.perf.duration_ms();
+  PriorityTxnService::execute_piece_time += (__rdtsc() - PriorityTxnService::g_tsc) / 2200000;
+  if (NodeConfiguration::g_priority_txn) {
+    auto &svc = util::Instance<PriorityTxnService>();
+    for (int i = 0; i < NodeConfiguration::g_nr_threads; ++i) {
+      auto pcs = svc.PriPcCnt[i]->Get();
+      abort_if(pcs != 0, "Priority piece cnt [{}] != 0, {}", i, pcs);
+      pcs = svc.BatchPcCnt[i]->Get();
+      abort_if(pcs != 0, "Batch piece cnt [{}] != 0, {}", i, pcs);
+    }
+  }
   fmt::memory_buffer buf;
   long ctt = 0;
   auto cur_epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
@@ -514,6 +543,7 @@ void EpochClient::OnExecuteComplete()
 
   if (cur_epoch_nr + 1 < g_max_epoch) {
     InitializeEpoch();
+    util::Instance<PriorityTxnService>().ClearBitMap();
   } else {
     // End of the experiment.
     perf.Show("All epochs done in");
@@ -521,8 +551,11 @@ void EpochClient::OnExecuteComplete()
     logger->info("Throughput {} txn/s", thr);
     logger->info("Insert / Initialize / Execute {} ms {} ms {} ms",
                  stats.insert_time_ms, stats.initialize_time_ms, stats.execution_time_ms);
+    if (NodeConfiguration::g_priority_txn)
+      logger->info("PriorityTxnService::execute_piece_time {} ms", PriorityTxnService::execute_piece_time);
     mem::PrintMemStats();
     mem::GetDataRegion().PrintUsageEachClass();
+    PriorityTxnService::PrintStats();
 
     if (Options::kOutputDir) {
       json11::Json::object result {

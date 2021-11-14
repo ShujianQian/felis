@@ -31,6 +31,7 @@ static_assert(kPriorityQueuePoolElementSize < 64);
 
 // Interface for priority scheduling
 class PrioritySchedulingPolicy {
+ friend class EpochExecutionDispatchService;
  protected:
   size_t len = 0;
  public:
@@ -85,9 +86,8 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
     } pending; // Pending inserts into the heap and the hashtable
 
     struct {
-      // Ring-buffer.
-      WaitState states[kOutOfOrderWindow];
-      uint32_t off;
+      // stack for preempted execution routines
+      WaitState states[kOutOfOrderWindow + 1];
       uint32_t len;
     } waiting;
 
@@ -100,10 +100,18 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
     std::atomic_ulong start;
   };
 
+  // q for priority txns
+  struct TxnQueue {
+    PriorityTxn* q;
+    std::atomic_ulong end;
+    std::atomic_ulong start;
+  };
+
   struct State {
     uint64_t current_sched_key;
     uint64_t ts;
     CompleteCounter complete_counter;
+    CompleteCounter batch_complete_counter;
 
     static constexpr int kSleeping = 0;
     static constexpr int kRunning = 1;
@@ -116,6 +124,7 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   struct Queue {
     PriorityQueue pq;
     ZeroQueue zq;
+    TxnQueue tq;
     util::SpinLock lock;
     State state;
   };
@@ -135,12 +144,15 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   void ProcessPending(PriorityQueue &q);
 
  public:
-  void Add(int core_id, PieceRoutine **routines, size_t nr_routines) final override;
+  void Add(int core_id, PieceRoutine **routines, size_t nr_routines, bool from_pri = false) final override;
+  void Add(int core_id, PriorityTxn *txn) final override;
   void AddBubble() final override;
+  void ProcessBatchCounter(int core_id);
   bool Peek(int core_id, DispatchPeekListener &should_pop) final override;
+  bool Peek(int core_id, PriorityTxn *&txn, bool dry_run = false) final override;
   bool Preempt(int core_id, BasePieceCollection::ExecutionRoutine *state) final override;
   void Reset() final override;
-  void Complete(int core_id) final override;
+  void Complete(int core_id, CompleteType type = BatchPiece) final override;
   int TraceDependency(uint64_t key) final override;
   bool IsRunning(int core_id) final override {
     auto &s = queues[core_id]->state;

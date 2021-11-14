@@ -8,6 +8,7 @@
 #include "util/arch.h"
 #include "opts.h"
 #include "mem.h"
+#include "priority.h"
 
 using util::Instance;
 using util::Impl;
@@ -25,6 +26,7 @@ PieceRoutine *PieceRoutine::CreateFromCapture(size_t capture_len)
   r->sched_key = 0;
   r->level = 0;
   r->affinity = std::numeric_limits<uint64_t>::max();
+  r->is_priority = false;
 
   r->callback = nullptr;
   r->next = nullptr;
@@ -37,6 +39,7 @@ PieceRoutine::CreateFromPacket(uint8_t *p, size_t packet_len)
 {
   auto r = (PieceRoutine *) BasePieceCollection::Alloc(sizeof(PieceRoutine));
   auto result_len = r->DecodeNode(p, packet_len);
+  r->is_priority = false;
   abort_if(result_len != packet_len,
            "DecodeNode() consumes {} but passed in {} bytes",
            result_len, packet_len);
@@ -186,12 +189,32 @@ void BasePieceCollection::ExecutionRoutine::Run()
   trace(TRACE_EXEC_ROUTINE "new ExecutionRoutine up and running on {}", core_id);
 
   PieceRoutine *next_r;
-  bool give_up = false;
-  // BasePromise::ExecutionRoutine *next_state = nullptr;
   go::Scheduler *sched = scheduler();
 
   auto should_pop = PromiseRoutineDispatchService::GenericDispatchPeekListener(
-      [&next_r, &give_up, sched]
+      [&next_r, sched]
+      (PieceRoutine *r, BasePieceCollection::ExecutionRoutine *state) -> bool {
+        // If state != nullptr, meaning we have some other coroutine to run from, therefore you are
+        // the temp routine for smaller pieces, you should give up, we should not pop another piece
+        // for you to run
+        if (state != nullptr) {
+          if (state->is_detached()) {
+            // reattach it
+            trace(TRACE_EXEC_ROUTINE "Wakeup Coroutine {}", (void *) state);
+            state->Init();
+            sched->WakeUp(state);
+          } else {
+            trace(TRACE_EXEC_ROUTINE "Found a sleeping Coroutine, but it's already awaken.");
+          }
+          return false;
+        }
+        // state is nullptr, meaning there is a new piece to run
+        next_r = r;
+        return true;
+      });
+
+  auto should_pop_pri = PromiseRoutineDispatchService::GenericDispatchPeekListener(
+      [&next_r, sched]
       (PieceRoutine *r, BasePieceCollection::ExecutionRoutine *state) -> bool {
         if (state != nullptr) {
           if (state->is_detached()) {
@@ -201,38 +224,68 @@ void BasePieceCollection::ExecutionRoutine::Run()
           } else {
             trace(TRACE_EXEC_ROUTINE "Found a sleeping Coroutine, but it's already awaken.");
           }
-          give_up = true;
           return false;
         }
-        give_up = false;
+        if (!r->is_priority) // is not a piece from priority txn
+          return false;
         next_r = r;
-        // next_state = state;
         return true;
       });
 
-
   unsigned long cnt = 0x01F;
+  PriorityTxn *txn;
 
+  bool done = false;
   do {
-    while (svc.Peek(core_id, should_pop)) {
-      // Periodic flush
+    if (svc.Peek(core_id, should_pop_pri)) {
+      auto rt = next_r;
+
+      util::Instance<PriorityTxnService>().UpdateProgress(core_id, rt->sched_key);
+      rt->callback(rt);
+      svc.Complete(core_id, PromiseRoutineDispatchService::CompleteType::PriorityPiece);
+      continue;
+    }
+
+    if (svc.Peek(core_id, txn)) {
+      txn->Run();
+      svc.Complete(core_id, PromiseRoutineDispatchService::CompleteType::PriorityInit);
+      continue;
+    }
+
+    if (svc.Peek(core_id, should_pop)) {
       cnt++;
       if ((cnt & 0x01F) == 0) {
         transport.PeriodicIO(core_id);
-      }
+      } // Periodic flush
 
       auto rt = next_r;
       if (rt->sched_key != 0)
         debug(TRACE_EXEC_ROUTINE "Run {} sid {}", (void *) rt, rt->sched_key);
 
-      rt->callback(rt);
-      svc.Complete(core_id);
-    }
-  } while (!give_up && svc.IsReady(core_id) && transport.PeriodicIO(core_id));
+      if (NodeConfiguration::g_priority_txn) {
+        util::Instance<PriorityTxnService>().UpdateProgress(core_id, rt->sched_key);
+      }
 
-  trace(TRACE_EXEC_ROUTINE "Coroutine Exit on core {} give up {}", core_id, give_up);
+      auto tsc = __rdtsc();
+      rt->callback(rt);
+      auto diff = (__rdtsc() - tsc) / 2200;
+      if (rt->sched_key != 0 && !rt->is_priority)
+        felis::probes::PieceTime{diff, rt->sched_key, (uintptr_t)rt->callback}();
+      svc.Complete(core_id);
+      continue;
+    }
+
+    if (!svc.IsReady(core_id))
+      done = true; // piece issuing on this core has not finished, quit
+    else if (!transport.PeriodicIO(core_id))
+      done = true; // did not receive new piece from network
+  } while (!done);
+
+  trace(TRACE_EXEC_ROUTINE "Coroutine Exit on core {}", core_id);
 }
 
+// gets called in vhandle_sync, when coroutine is spinning on the version.
+// return whether the caller should exit from the spinning
 bool BasePieceCollection::ExecutionRoutine::Preempt()
 {
   auto &svc = util::Impl<PromiseRoutineDispatchService>();
@@ -248,6 +301,7 @@ bool BasePieceCollection::ExecutionRoutine::Preempt()
     sched->RunNext(go::Scheduler::SleepState);
 
     spawn = true;
+    // if the coroutine waiting queue should pop from the stack, return true
     auto should_pop = PromiseRoutineDispatchService::GenericDispatchPeekListener(
         [this, &spawn]
         (PieceRoutine *, BasePieceCollection::ExecutionRoutine *state) -> bool {
@@ -256,6 +310,8 @@ bool BasePieceCollection::ExecutionRoutine::Preempt()
           if (state != nullptr) {
             trace(TRACE_EXEC_ROUTINE "Unfinished encoutered, no spawn.");
             if (state->is_detached()) {
+              // ExecutionRoutines are linked together.
+              // if a ExecutionRoutine is detached from the scheduler queue, we need to reattach it
               state->Init();
               sched->WakeUp(state);
             }
@@ -268,6 +324,8 @@ bool BasePieceCollection::ExecutionRoutine::Preempt()
 
     trace(TRACE_EXEC_ROUTINE "Just got up!");
     if (!svc.Peek(core_id, should_pop))
+      // I guess this is after preemption, and this coroutine still has nothing
+      // to run? (because there exists some smaller priority pieces?)
       goto sleep;
 
     set_busy_poll(false);

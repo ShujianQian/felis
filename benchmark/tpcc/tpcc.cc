@@ -841,9 +841,21 @@ static constexpr int kTPCCTxnMix[] = {
   45, 43, 4, 4, 4
 };
 
+static int kTPCCPriTxnBatchThres[] = {
+  20, 100
+}; // meaning mix = 20, 80
+
 felis::BaseTxn *Client::CreateTxn(uint64_t serial_id)
 {
-  int rd = r.next_u32() % 100;
+  auto x_pct = NodeConfiguration::g_priority_batch_mode_pct;
+  int rd = r.next_u32() % (100 + x_pct);
+  if (x_pct && rd >= 100) {
+    rd = r.next_u32() % 100; // re-random
+    if (rd < kTPCCPriTxnBatchThres[0])
+      return TxnFactory::Create(TxnType::PriStock, this, serial_id);
+    else
+      return TxnFactory::Create(TxnType::PriNewOrderDelivery, this, serial_id);
+  }
   int txn_type_id = 0;
   while (true) {
     int threshold = kTPCCTxnMix[txn_type_id];

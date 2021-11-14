@@ -3,6 +3,7 @@
 #define FELIS_PROBES_H
 
 #include <cstdint>
+#include "json11/json11.hpp"
 
 namespace felis {
 namespace probes {
@@ -101,6 +102,46 @@ struct TpccDelivery {
   void operator()() const;
 };
 
+struct PriInitQueueTime {
+  uint64_t time;
+  uint64_t sid;
+  void operator()() const;
+};
+
+struct PriInitTime {
+  uint64_t succ_time;
+  uint64_t fail_time;
+  int fail_cnt;
+  uint64_t sid;
+  void operator()() const;
+};
+
+struct PriExecQueueTime {
+  uint64_t time;
+  uint64_t sid;
+  void operator()() const;
+};
+
+struct PriExecTime {
+  uint64_t time;
+  uint64_t total_latency;
+  uint64_t sid;
+  void operator()() const;
+};
+
+struct PieceTime {
+  uint64_t time;
+  uint64_t sid;
+  uintptr_t addr;
+  void operator()() const;
+};
+
+struct Distance {
+  int64_t dist_global;
+  int64_t dist_local;
+  uint64_t sid;
+  void operator()() const;
+};
 }
 }
 
@@ -118,6 +159,12 @@ struct TpccDelivery {
   PROBE_PROXY(felis::probes::EndOfPhase);                                      \
   PROBE_PROXY(felis::probes::TpccNewOrder);                                    \
   PROBE_PROXY(felis::probes::TpccPayment);                                     \
-  PROBE_PROXY(felis::probes::TpccDelivery);
+  PROBE_PROXY(felis::probes::TpccDelivery);                                    \
+  PROBE_PROXY(felis::probes::PriInitQueueTime);                                \
+  PROBE_PROXY(felis::probes::PriInitTime);                                     \
+  PROBE_PROXY(felis::probes::PriExecQueueTime);                                \
+  PROBE_PROXY(felis::probes::PriExecTime);                                     \
+  PROBE_PROXY(felis::probes::PieceTime);                                       \
+  PROBE_PROXY(felis::probes::Distance);
 
 #endif /* FELIS_PROBES_H */

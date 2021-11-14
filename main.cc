@@ -4,6 +4,7 @@
 
 #include "module.h"
 #include "node_config.h"
+#include "priority.h"
 #include "tcp_node.h"
 #include "console.h"
 #include "log.h"
@@ -87,6 +88,18 @@ int main(int argc, char *argv[])
   util::InstanceInit<NodeConfiguration>();
   util::Instance<NodeConfiguration>().SetupNodeName(node_name);
   util::InstanceInit<TcpNodeTransport>();
+
+  logger->info("Priority Txn sercive status {}", Options::kPriorityTxn);
+  if (Options::kPriorityTxn) {
+    NodeConfiguration::g_priority_txn = true;
+    util::InstanceInit<PriorityTxnService>();
+  }
+  logger->info("Priority Txn batch mode {}", Options::kPriorityBatchMode);
+  if (Options::kPriorityBatchMode) {
+    abort_if(Options::kPriorityTxn, "Cannot turn on both PriorityTxn and PriorityBatchMode");
+    NodeConfiguration::g_priority_batch_mode = true;
+    NodeConfiguration::g_priority_batch_mode_pct = Options::kPercentagePriorityTxn.ToInt();
+  }
 
   // init tables from the workload module
   Module<WorkloadModule>::InitModule(workload_name);

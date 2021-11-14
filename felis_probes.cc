@@ -5,12 +5,16 @@
 
 #include "felis_probes.h"
 #include "probe_utils.h"
+#include "opts.h"
+#include "node_config.h"
 
 #include "vhandle.h" // Let's hope this won't slow down the build.
 #include "gc.h"
+#include "epoch.h"
+#include "priority.h"
 
 static struct ProbeMain {
-  agg::Agg<agg::Histogram<128, 0, 256>> wait_cnt;
+  agg::Agg<agg::LogHistogram<16>> wait_cnt;
   agg::Agg<agg::LogHistogram<18, 0, 2>> versions;
   agg::Agg<agg::Histogram<32, 0, 1>> write_cnt;
 
@@ -21,12 +25,52 @@ static struct ProbeMain {
   agg::Agg<agg::Histogram<16, 0, 1>> absorb_memmove_size_detail;
   agg::Agg<agg::Histogram<1024, 0, 16>> absorb_memmove_size;
   agg::Agg<agg::Average> absorb_memmove_avg;
-  agg::Agg<agg::Histogram<128, 0, 1 << 10>> mcs_wait_cnt;
-  agg::Agg<agg::Average> mcs_wait_cnt_avg;
+  agg::Agg<agg::Histogram<128, 0, 1 << 10>> msc_wait_cnt;
+  agg::Agg<agg::Average> msc_wait_cnt_avg;
 
   std::vector<long> mem_usage;
   std::vector<long> expansion;
 
+  agg::Agg<agg::Average> init_queue_avg;
+  agg::Agg<agg::Max<std::tuple<uint64_t, int>>> init_queue_max;
+  agg::Agg<agg::Histogram<512, 0, 2>> init_queue_hist;
+
+  agg::Agg<agg::Average> init_fail_avg;
+  agg::Agg<agg::Max<std::tuple<uint64_t, int>>> init_fail_max;
+  agg::Agg<agg::Histogram<512, 0, 1>> init_fail_hist;
+
+  agg::Agg<agg::Sum> init_fail_cnt;
+  agg::Agg<agg::Average> init_fail_cnt_avg;
+  agg::Agg<agg::Max<std::tuple<uint64_t, int>>> init_fail_cnt_max;
+  agg::Agg<agg::Histogram<128, 0, 1>> init_fail_cnt_hist;
+
+  agg::Agg<agg::Average> init_succ_avg;
+  agg::Agg<agg::Max<std::tuple<uint64_t, int>>> init_succ_max;
+  agg::Agg<agg::Histogram<512, 0, 1>> init_succ_hist;
+
+  agg::Agg<agg::Average> exec_queue_avg;
+  agg::Agg<agg::Max<std::tuple<uint64_t, int>>> exec_queue_max;
+  agg::Agg<agg::Histogram<1024, 0, 2>> exec_queue_hist;
+
+  agg::Agg<agg::Average> exec_avg;
+  agg::Agg<agg::Max<std::tuple<uint64_t, int>>> exec_max;
+  agg::Agg<agg::Histogram<512, 0, 2>> exec_hist;
+
+  agg::Agg<agg::Average> total_latency_avg;
+  agg::Agg<agg::Max<std::tuple<uint64_t, int>>> total_latency_max;
+  agg::Agg<agg::SpecialHistogram> total_latency_hist;
+
+  agg::Agg<agg::Average> piece_avg;
+  agg::Agg<agg::Max<std::tuple<uint64_t, uintptr_t, int>>> piece_max;
+  agg::Agg<agg::Histogram<512, 0, 1>> piece_hist;
+
+  agg::Agg<agg::Average> dist_global_avg;
+  agg::Agg<agg::Max<std::tuple<uint64_t, int>>> dist_global_max;
+  agg::Agg<agg::Histogram<1024, -10000, 20>> dist_global_hist;
+
+  agg::Agg<agg::Average> dist_local_avg;
+  agg::Agg<agg::Max<std::tuple<uint64_t, int>>> dist_local_max;
+  agg::Agg<agg::Histogram<1024, -10000, 20>> dist_local_hist;
   ~ProbeMain();
 } global;
 
@@ -42,8 +86,40 @@ thread_local struct ProbePerCore {
   AGG(absorb_memmove_size_detail);
   AGG(absorb_memmove_size);
   AGG(absorb_memmove_avg);
-  AGG(mcs_wait_cnt);
-  AGG(mcs_wait_cnt_avg);
+  AGG(msc_wait_cnt);
+  AGG(msc_wait_cnt_avg);
+
+  AGG(init_queue_avg);
+  AGG(init_queue_max);
+  AGG(init_queue_hist);
+  AGG(init_fail_avg);
+  AGG(init_fail_max);
+  AGG(init_fail_hist);
+  AGG(init_fail_cnt);
+  AGG(init_fail_cnt_avg);
+  AGG(init_fail_cnt_max);
+  AGG(init_fail_cnt_hist);
+  AGG(init_succ_avg);
+  AGG(init_succ_max);
+  AGG(init_succ_hist);
+  AGG(exec_queue_avg);
+  AGG(exec_queue_max);
+  AGG(exec_queue_hist);
+  AGG(exec_avg);
+  AGG(exec_max);
+  AGG(exec_hist);
+  AGG(total_latency_avg);
+  AGG(total_latency_max);
+  AGG(total_latency_hist);
+  AGG(piece_avg);
+  AGG(piece_max);
+  AGG(piece_hist);
+  AGG(dist_global_avg);
+  AGG(dist_global_max);
+  AGG(dist_global_hist);
+  AGG(dist_local_avg);
+  AGG(dist_local_max);
+  AGG(dist_local_hist);
 } statcnt;
 
 // Default for all probes
@@ -97,9 +173,7 @@ template <> void OnProbe(felis::probes::WaitCounters p)
   statcnt.wait_cnt << p.wait_cnt;
   last_wait_cnt = p.wait_cnt;
 }
-#endif
 
-#if 0
 template <> void OnProbe(felis::probes::TpccDelivery p)
 {
   CountUpdate(statcnt.delivery_cnt, p.nr_update);
@@ -155,9 +229,83 @@ template <> void OnProbe(felis::probes::VHandleExpand p)
 
 #endif
 
+template <> void OnProbe(felis::probes::PriInitQueueTime p)
+{
+  int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+  statcnt.init_queue_avg << p.time;
+  statcnt.init_queue_hist << p.time;
+  statcnt.init_queue_max.addData(p.time, std::make_tuple(p.sid, core_id));
+}
+
+template <> void OnProbe(felis::probes::PriInitTime p)
+{
+  int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+  if (p.fail_time != 0) {
+    statcnt.init_fail_cnt << p.fail_cnt;
+    statcnt.init_fail_cnt_avg << p.fail_cnt;
+    statcnt.init_fail_cnt_max.addData(p.fail_cnt, std::make_tuple(p.sid, core_id));
+    statcnt.init_fail_cnt_hist << p.fail_cnt;
+  }
+
+  statcnt.init_fail_avg << p.fail_time;
+  statcnt.init_fail_max.addData(p.fail_time, std::make_tuple(p.sid, core_id));
+  statcnt.init_fail_hist << p.fail_time;
+
+  statcnt.init_succ_avg << p.succ_time;
+  statcnt.init_succ_max.addData(p.succ_time, std::make_tuple(p.sid, core_id));
+  statcnt.init_succ_hist << p.succ_time;
+}
+
+template <> void OnProbe(felis::probes::PriExecQueueTime p)
+{
+  int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+  statcnt.exec_queue_avg << p.time;
+  statcnt.exec_queue_hist << p.time;
+  statcnt.exec_queue_max.addData(p.time, std::make_tuple(p.sid, core_id));
+}
+
+template <> void OnProbe(felis::probes::PriExecTime p)
+{
+  int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+  statcnt.exec_avg << p.time;
+  statcnt.exec_hist << p.time;
+  statcnt.exec_max.addData(p.time, std::make_tuple(p.sid, core_id));
+  statcnt.total_latency_avg << p.total_latency;
+  statcnt.total_latency_hist << p.total_latency;
+  statcnt.total_latency_max.addData(p.total_latency, std::make_tuple(p.sid, core_id));
+}
+
+template <> void OnProbe(felis::probes::PieceTime p)
+{
+  int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+  statcnt.piece_avg << p.time;
+  statcnt.piece_hist << p.time;
+  statcnt.piece_max.addData(p.time, std::make_tuple(p.sid, p.addr, core_id));
+}
+
+template <> void OnProbe(felis::probes::Distance p)
+{
+  int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+  statcnt.dist_global_avg << p.dist_global;
+  statcnt.dist_global_hist << p.dist_global;
+  statcnt.dist_global_max.addData(p.dist_global, std::make_tuple(p.sid, core_id));
+  statcnt.dist_local_avg << p.dist_local;
+  statcnt.dist_local_hist << p.dist_local;
+  statcnt.dist_local_max.addData(p.dist_local, std::make_tuple(p.sid, core_id));
+}
+
+enum PriTxnMeasureType : int{
+  InitQueue,
+  InitFail,
+  InitSucc,
+  ExecQueue,
+  Exec,
+  Total,
+  NumPriTxnMeasureType,
+};
+
 ProbeMain::~ProbeMain()
 {
-  //   std::cout << global.wait_cnt() << std::endl;
 #if 0
   std::cout
       << "waitcnt" << std::endl
@@ -186,9 +334,9 @@ ProbeMain::~ProbeMain()
 #endif
 
 #if 0
-  std::cout << "VHandle MCS Spin Time Distribution (in TSC)" << std::endl
+  std::cout << "VHandle MSC Spin Time Distribution (in TSC)" << std::endl
             << global.msc_wait_cnt << std::endl;
-  std::cout << "VHandle MCS Spin Time Avg: "
+  std::cout << "VHandle MSC Spin Time Avg: "
             << global.msc_wait_cnt_avg
             << std::endl;
 
@@ -201,6 +349,170 @@ ProbeMain::~ProbeMain()
             << std::endl;
   std::cout << "Memmove/Sorting Distance Avg: " << global.absorb_memmove_avg << std::endl;
 #endif
+  std::cout << "[Pri-stat] batch piece " << global.piece_avg() << " us "
+            << "(max: " << global.piece_max() << ")" << std::endl;
+  std::cout << global.piece_hist();
+
+  if (global.init_queue_avg().getCnt() != 0) {
+    std::cout << "[Pri-stat] init_queue " << global.init_queue_avg() << " us "
+              << "(max: " << global.init_queue_max() << ")" << std::endl;
+    std::cout << global.init_queue_hist();
+  }
+
+  if (global.init_fail_avg().getCnt() != 0) {
+    std::cout << "[Pri-stat] init_fail " << global.init_fail_avg() << " us "
+              << "(max: " << global.init_fail_max() << ")" << std::endl;
+    std::cout << global.init_fail_hist();
+  }
+
+  if (global.init_fail_cnt_avg().getCnt() != 0) {
+    std::cout << "[Pri-stat] failed txn cnt: " << global.init_fail_cnt()
+              << " (avg: " << global.init_fail_cnt_avg() << " times,"
+              << " max: " << global.init_fail_cnt_max() << ")" << std::endl;
+    std::cout << global.init_fail_cnt_hist();
+  }
+
+  if (global.init_succ_avg().getCnt() != 0) {
+    std::cout << "[Pri-stat] init_succ " << global.init_succ_avg() << " us "
+              << "(max: " << global.init_succ_max() << ")" << std::endl;
+    std::cout << global.init_succ_hist();
+  }
+
+  if (global.exec_queue_avg().getCnt() != 0) {
+    std::cout << "[Pri-stat] exec_queue " << global.exec_queue_avg() << " us "
+              << "(max: " << global.exec_queue_max() << ")" << std::endl;
+    std::cout << global.exec_queue_hist();
+  }
+
+  if (global.exec_avg().getCnt() != 0) {
+    std::cout << "[Pri-stat] exec " << global.exec_avg() << " us "
+              << "(max: " << global.exec_max() << ")" << std::endl;
+    std::cout << global.exec_hist();
+  }
+
+  if (global.total_latency_avg().getCnt() != 0) {
+    std::cout << "[Pri-stat] total_latency " << global.total_latency_avg() << " us "
+              << "(max: " << global.total_latency_max() << ")" << std::endl;
+    std::cout << global.total_latency_hist();
+  }
+
+  if (global.dist_global_avg().getCnt() != 0) {
+    std::cout << "[Pri-stat] global dist " << global.dist_global_avg() << " sids "
+              << "(max: " << global.dist_global_max() << ")" << std::endl;
+    std::cout << global.dist_global_hist();
+  }
+
+  if (global.dist_local_avg().getCnt() != 0) {
+    std::cout << "[Pri-stat] local dist " << global.dist_local_avg() << " sids "
+              << "(max: " << global.dist_local_max() << ")" << std::endl;
+    std::cout << global.dist_local_hist();
+  }
+
+  if (global.total_latency_avg().getCnt() != 0 && felis::Options::kOutputDir) {
+    json11::Json::object result;
+    const int size = PriTxnMeasureType::NumPriTxnMeasureType;
+    agg::Agg<agg::Average> *arr[size + 1] = {
+      &global.init_queue_avg, &global.init_fail_avg,
+      &global.init_succ_avg, &global.exec_queue_avg,
+      &global.exec_avg, &global.total_latency_avg,
+      &global.dist_local_avg,
+    };
+
+    // X_1 is average, where X in [1,7]
+    for (int i = 0; i < 7; ++i) {
+      std::string label = std::to_string(i+1) + "_1";
+      result.insert({label, arr[i]->getAvg()});
+    }
+    // X_2, X_3, X_4, X_5 are 50%, 90%, 99%, 99.9% numbers, where X in [1,7]
+    int idx; // useless
+    for (int i = 0; i < 7; ++i) {
+      for (int j = 2; j <= 5; ++j) {
+        std::string label = std::to_string(i+1) + "_" + std::to_string(j);
+        double pctile;
+        switch (j) {
+          case 2: pctile = 0.5;   break;
+          case 3: pctile = 0.9;   break;
+          case 4: pctile = 0.99;  break;
+          case 5: pctile = 0.999; break;
+        }
+        switch (i) {
+          case 0:
+            result.insert({label, global.init_queue_hist.CalculatePercentile(pctile)});
+            break;
+          case 1:
+            result.insert({label, global.init_fail_hist.CalculatePercentile(pctile)});
+            break;
+          case 2:
+            result.insert({label, global.init_succ_hist.CalculatePercentile(pctile)});
+            break;
+          case 3:
+            result.insert({label, global.exec_queue_hist.CalculatePercentile(pctile)});
+            break;
+          case 4:
+            result.insert({label, global.exec_hist.CalculatePercentile(pctile)});
+            break;
+          case 5:
+            result.insert({label, global.total_latency_hist.CalculatePercentile(pctile, idx)});
+            break;
+          case 6:
+            result.insert({label, global.dist_local_hist.CalculatePercentile(pctile)});
+            break;
+        }
+      }
+    }
+
+    // 8_1 abort rate, unit %
+    long cnt = global.total_latency_avg.getCnt();
+    double abort_rate = 100.0 * global.init_fail_cnt.sum / cnt;
+    result.insert({"8_1", abort_rate});
+    // 8_2 txn count
+    result.insert({"8_2", static_cast<int>(cnt)});
+    // 9_1 batch throughput, 9_2 priority throughput, 9_3 total throughput
+    auto &client = felis::EpochClient::g_workload_client;
+    auto dur = client->GetPerf().duration_ms();
+    long total_nr_txns = (client->g_max_epoch - 1) * client->NumberOfTxns();
+    long batch_tpt = total_nr_txns * 1000 / dur; // duration is in ms
+    long pri_tpt = batch_tpt * cnt / total_nr_txns;
+    long pri_tpt_1 = cnt * 1000 / felis::PriorityTxnService::execute_piece_time;
+    int total_tpt = batch_tpt + pri_tpt;
+    result.insert({"9_1", static_cast<int>(batch_tpt)});
+    result.insert({"9_2", static_cast<int>(pri_tpt_1)});
+    result.insert({"9_3", total_tpt});
+    // 9_4 actual priority txn percentage, unit %
+    double pct = 100.0 * cnt / total_nr_txns;
+    result.insert({"9_4", pct});
+    std::cout << "[Pri-stat] actual priority percentage " << pct
+              << ", priority throughput " << static_cast<int>(pri_tpt_1) << " txn/s"
+              << std::endl;
+    // 9_5 pre-generated priority txn max time range (ms)
+    auto time_range = felis::PriorityTxnService::g_nr_priority_txn * felis::PriorityTxnService::g_interval_priority_txn / 1000000;
+    result.insert({"9_5", static_cast<int>(time_range)});
+    // 9_6 actual execution phase time (ms)
+    double exec_phase_time = (double)felis::PriorityTxnService::execute_piece_time / (client->g_max_epoch - 1);
+    result.insert({"9_6", exec_phase_time});
+    // 9_7 ratio of PriTxn executed / PriTxn Generated
+    double finished_pri_txn_per_epoch = (double)cnt / (client->g_max_epoch - 1);
+    double ratio = finished_pri_txn_per_epoch / felis::PriorityTxnService::g_nr_priority_txn;
+    result.insert({"9_7", ratio});
+    std::cout << "[Pri-stat] range " << time_range << ", exec " << exec_phase_time << ", ratio " << ratio << std::endl;
+
+    auto node_name = util::Instance<felis::NodeConfiguration>().config().name;
+    time_t tm;
+    char now[80];
+    time(&tm);
+    strftime(now, 80, "-%F-%X", localtime(&tm));
+    std::ofstream result_output(
+        felis::Options::kOutputDir.Get() + "/pri" + now + ".json");
+    result_output << json11::Json(result).dump() << std::endl;
+
+    std::ofstream latency_dist_output(
+        felis::Options::kOutputDir.Get() + "/latency_cdf.csv");
+    latency_dist_output << global.total_latency_hist().OutputCdf();
+
+    // std::ofstream pri_pc_output(
+    //     felis::Options::kOutputDir.Get() + "/pri_piece.csv");
+    // pri_pc_output << util::Instance<felis::PriorityTxnService>().OutputPriPc();
+  }
 }
 
 PROBE_LIST;

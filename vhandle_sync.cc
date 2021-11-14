@@ -3,6 +3,7 @@
 #include <syscall.h>
 #include "vhandle.h"
 #include "vhandle_sync.h"
+#include "priority.h"
 
 namespace felis {
 
@@ -98,17 +99,23 @@ void SpinnerSlot::WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t v
 void SpinnerSlot::OfferData(volatile uintptr_t *addr, uintptr_t obj)
 {
   auto oldval = *addr;
-  auto newval = obj;
+  auto newval = obj | (oldval & kReadBitMask); // read bit
 
   // installing newval
   while (true) {
     if (!IsPendingVal(oldval)) {
+      if (oldval == (uintptr_t)nullptr) {
+        logger->critical("oldval is nullptr, addr {0:x}", (void*)addr);
+        std::abort(); // batched txn's write is onto a deleted version, abort
+      }
       logger->critical("strange oldval {0:x}", oldval);
+      std::abort();
     }
 
     uintptr_t val = __sync_val_compare_and_swap(addr, oldval, newval);
     if (val == oldval) break;
     oldval = val;
+    newval = newval | (oldval & kReadBitMask); // read bit
   }
 
   // need to notify according to the bitmaps, which is oldval

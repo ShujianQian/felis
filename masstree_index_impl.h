@@ -39,7 +39,8 @@ class MasstreeIndex final : public Table {
 
   VHandle *SearchOrCreate(const VarStrView &k, bool *created) override;
   VHandle *SearchOrCreate(const VarStrView &k) override;
-  VHandle *Search(const VarStrView &k) override;
+  VHandle *Search(const VarStrView &k, uint64_t sid = 0) override;
+  VHandle *PriorityInsert(const VarStr *k, uint64_t sid) override;
 
   Table::Iterator *IndexSearchIterator(const VarStrView &start, const VarStrView &end) override;
   Table::Iterator *IndexSearchIterator(const VarStrView &start) override;

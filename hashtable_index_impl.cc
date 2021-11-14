@@ -143,7 +143,7 @@ VHandle *HashtableIndex::SearchOrCreate(const VarStrView &k)
   return SearchOrCreate(k, &unused);
 }
 
-VHandle *HashtableIndex::Search(const VarStrView &k)
+VHandle *HashtableIndex::Search(const VarStrView &k, uint64_t sid)
 {
   auto idx = hash(k) % nr_buckets;
   auto p = (HashEntry *) (table + idx * row_size() + kOffset);

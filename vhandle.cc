@@ -13,6 +13,7 @@
 #include "opts.h"
 #include "contention_manager.h"
 
+#include "priority.h"
 #include "literals.h"
 
 namespace felis {
@@ -37,6 +38,7 @@ SortedArrayVHandle::SortedArrayVHandle()
   //         "Too many cores, we need a larger vhandle");
 
   this_coreid = alloc_by_regionid = mem::ParallelPool::CurrentAffinity();
+  extra_vhandle = nullptr;
   cont_affinity = -1;
 
   // versions = (uint64_t *) mem::GetDataRegion().Alloc(2 * capacity * sizeof(uint64_t));
@@ -150,7 +152,8 @@ void SortedArrayVHandle::IncreaseSize(int delta, uint64_t epoch_nr)
 
 void SortedArrayVHandle::AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr, int ondemand_split_weight)
 {
-  if (ondemand_split_weight) nr_ondsplt += ondemand_split_weight;
+  if (!NodeConfiguration::g_priority_txn || !PriorityTxnService::g_row_rts)
+    if (ondemand_split_weight) nr_ondsplt += ondemand_split_weight;
 
   // append this version at the end of version array
   IncreaseSize(1, epoch_nr);
@@ -233,9 +236,26 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, int o
   }
 }
 
+bool SortedArrayVHandle::AppendNewPriorityVersion(uint64_t sid)
+{
+  auto old = extra_vhandle.load();
+  if (old == nullptr) {
+    // did not exist, allocate
+    auto temp = new ExtraVHandle();
+    auto succ = extra_vhandle.compare_exchange_strong(old, temp);
+    if (succ)
+      old = temp;
+    else {
+      delete temp; // somebody else allocated and CASed their ptr first, just use that
+      old = extra_vhandle.load(); // all to avoid an extra atomic load
+    }
+  }
+  return old->AppendNewPriorityVersion(sid);
+}
+
 volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
 {
-  assert(size > 0);
+  if (size == 0) return nullptr;
 
   if (inline_used != 0xFF) __builtin_prefetch((uint8_t *) this + 128);
 
@@ -260,8 +280,6 @@ volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
 
   p = std::lower_bound(start, end, sid);
   if (p == versions) {
-    logger->critical("ReadWithVersion() {} cannot found for sid {} start is {} begin is {}",
-                     (void *) this, sid, *start, *versions);
     return nullptr;
   }
 found:
@@ -285,13 +303,52 @@ found:
 //   but if sid = 4, then we don't have the value for it to read, then returns nullptr
 VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
 {
+  abort_if(sid == -1, "sid == -1");
   int pos;
   volatile uintptr_t *addr = WithVersion(sid, pos);
-  if (!addr) return nullptr;
+
+  // MVTO: mark row read timestamp
+  if (PriorityTxnService::g_row_rts) {
+    uint64_t new_rts_64 = sid >> 8;
+    abort_if(new_rts_64 > 0xFFFFFFFF, "too many epochs ({}) for RowRTS", sid >> 32);
+    unsigned int new_rts = new_rts_64;
+    unsigned int old = this->nr_ondsplt.load();
+    while (new_rts > old) {
+      if (this->nr_ondsplt.compare_exchange_strong(old, new_rts))
+        break;
+    }
+  }
+
+  // check extra array. If the version in the extra array is closer to the sid than the
+  // version in this original version array, read from that instead.
+  uint64_t ver = (addr == nullptr) ? 0 : versions[pos];
+  auto extra = extra_vhandle.load();
+  VarStr* extra_result = extra ? extra->ReadWithVersion(sid, ver, this) : nullptr;
+  if (extra_result)
+    return extra_result;
+
+  if (!addr) {
+    logger->critical("ReadWithVersion() {} cannot find for sid {} begin is {}",
+                     (void *) this, sid, *versions);
+    return nullptr;
+  }
+
+  // mark read bit
+  uintptr_t oldval = *addr;
+  if (PriorityTxnService::g_read_bit && !(oldval & kReadBitMask)) {
+    uintptr_t newval = oldval | kReadBitMask;
+    while (!(oldval & kReadBitMask)) {
+      uintptr_t val = __sync_val_compare_and_swap(addr, oldval, newval);
+      if (val == oldval) break;
+      oldval = val;
+      newval = oldval | kReadBitMask;
+    }
+  }
 
   sync().WaitForData(addr, sid, versions[pos], (void *) this);
 
-  return (VarStr *) *addr;
+  uintptr_t varstr_ptr = *addr & ~kReadBitMask;
+  return (VarStr *) varstr_ptr;
 }
 
 // Read the exact version. version_idx is the version offset in the array, not serial id
@@ -305,18 +362,208 @@ VarStr *SortedArrayVHandle::ReadExactVersion(unsigned int version_idx)
   volatile uintptr_t *addr = &objects[version_idx];
   assert(addr);
 
-  return (VarStr *) *addr;
+  // mark read bit
+  uintptr_t varstr_ptr = *addr;
+  if (PriorityTxnService::g_read_bit && !(varstr_ptr & kReadBitMask)) {
+    *addr = varstr_ptr | kReadBitMask;
+  }
+  varstr_ptr = varstr_ptr & ~kReadBitMask;
+
+  return (VarStr *) varstr_ptr;
+}
+
+// return true if sid's previous version has been read
+bool SortedArrayVHandle::CheckReadBit(uint64_t sid) {
+  abort_if(sid == -1, "sid == -1");
+  abort_if(!PriorityTxnService::g_read_bit, "CheckReadBit() is called when read bit is off");
+  int pos;
+  volatile uintptr_t *addr = WithVersion(sid, pos);
+
+  uint64_t ver = (addr == nullptr) ? 0 : versions[pos];
+  auto extra = extra_vhandle.load();
+  bool is_in = false;
+  bool extra_result = extra ? extra->CheckReadBit(sid, ver, this, is_in) : false;
+  if (is_in) // if the previous version is in Extra VHandle, just use the result
+    return extra_result;
+
+  if (!addr)
+    return false; // no previous version exists, no one could have read it, our prepare is good
+
+  if (*addr == kPendingValue)
+    return false; // if it's not written, it couldn't be read
+  if (PriorityTxnService::g_last_version_patch && pos == this->size - 1 && (*addr & kReadBitMask)) {
+    // last version is read
+    uint64_t rts = ((uint64_t)(this->GetRowRTS()) << 8) + 1;
+    auto wts = sid;
+    return wts <= rts;
+  }
+  return *addr & kReadBitMask;
+}
+
+bool SortedArrayVHandle::IsExistingVersion(uint64_t sid)
+{
+  uint64_t *p = versions;
+  uint64_t *end = versions + size;
+  p = std::lower_bound(versions, end, sid);
+  if (p == versions)
+    return false;
+  if (p < end && *p == sid) return true;
+  auto handle = extra_vhandle.load();
+  if (handle)
+    return handle->IsExistingVersion(sid);
+  return false;
+}
+
+uint32_t SortedArrayVHandle::GetRowRTS()
+{
+  abort_if(!PriorityTxnService::g_row_rts, "GetRowRTS() is called when Row RTS is off");
+  return nr_ondsplt.load(std::memory_order_seq_cst);
+}
+
+/** @brief Find a SID that, starting from this SID, all of the versions of this
+    row has not been read.
+    @param min search lower bound (SID returned cannot be smaller than min).
+    @return SID found. */
+uint64_t SortedArrayVHandle::SIDBackwardSearch(uint64_t min)
+{
+  // eg:    extra vhandle         6r            11      14r      16  18
+  //        original vhandle  5r      7  8  10      13       15          19
+  //        min = 12
+  // 1. search in extra, extra = 16
+  // 2. search in original, original = 12 (because 10 < min, use min as result)
+  // 3. return the larger of the two, 16
+  //    TODO: combine 1&2, allowing it to find 15
+  abort_if(!PriorityTxnService::g_read_bit, "SIDBackwardSearch() is called when read bit is off");
+  uint64_t original = 0, extra = 0;
+
+  auto handle = extra_vhandle.load();
+  if (handle) extra = handle->FindUnreadVersionLowerBound(min);
+  original = this->FindUnreadVersionLowerBound(min);
+
+  if (original == 0 && extra == 0)
+    return util::Instance<PriorityTxnService>().GetMaxProgress();
+  if (original == 0) return extra;
+  if (extra == 0) return original;
+  return (original > extra) ? original : extra;
+}
+
+/** @brief Find the lower bound of the last consecutive unread versions.
+    @param min search lower bound (SID returned can only be larger than min).
+    @return the SID of the version.
+    if answer found is smaller than min, return min;
+    if all versions are read, return 0. */
+uint64_t SortedArrayVHandle::FindUnreadVersionLowerBound(uint64_t min)
+{
+  // searching backwards. use max_prog to help speed up finding the last read bit version
+  uint64_t max_prog = util::Instance<PriorityTxnService>().GetMaxProgress();
+  int upper_pos;
+  volatile uintptr_t *ptr_obj = WithVersion(max_prog, upper_pos);
+  if (ptr_obj == nullptr)
+    return 0;
+  if (*ptr_obj & kReadBitMask) // all the versions are read
+    return 0;
+  volatile uintptr_t *ptr_ver = &versions[upper_pos];
+  if (*ptr_ver <= min) // answer found is smaller than min
+    return min;
+
+  while (!(*ptr_obj & kReadBitMask) && ptr_ver != versions) {
+    if (*ptr_ver <= min) // answer found is smaller than min
+      return min; // check this before moving the ptr!!!
+    ptr_ver--;
+    ptr_obj--;
+  } // this while will at least happen once
+
+  if (ptr_ver == versions && !(*ptr_obj & kReadBitMask))
+    return versions[0];
+
+  return *(ptr_ver + 1);
+}
+
+/** @brief Find the first SID > min that is unread.
+    @param min search lower bound (if answer found is smaller than min, return min)
+    @return SID found.*/
+uint64_t SortedArrayVHandle::SIDForwardSearch(uint64_t min)
+{
+  abort_if(!PriorityTxnService::g_read_bit, "SIDForwardSearch() is called when read bit is off");
+  uint64_t original = 0, extra = 0;
+
+  original = this->FindFirstUnreadVersion(min);
+  auto handle = extra_vhandle.load();
+  if (handle) extra = handle->FindFirstUnreadVersion(min);
+
+  if (original == 0 && extra == 0)
+  {
+    if (PriorityTxnService::g_last_version_patch) {
+      uint64_t rts = (this->nr_ondsplt.load() + 1) << 8;
+      if (rts < min)
+        return min;
+      return rts;
+    }
+    return util::Instance<PriorityTxnService>().GetMaxProgress();
+  }
+  if (original == 0) return extra;
+  if (extra == 0) return original;
+  return (original < extra) ? original : extra;
+}
+
+// if no unread version can be found in the range of [min, core_prog) can be found, return 0.
+uint64_t SortedArrayVHandle::FindFirstUnreadVersion(uint64_t min)
+{
+  int lower_pos;
+  volatile uintptr_t *ptr_obj = WithVersion(min, lower_pos);
+  if (ptr_obj == nullptr)
+    return min;
+
+  volatile uintptr_t *ptr_ver = &versions[lower_pos]; // could be smaller than min
+
+  while (*ptr_obj & kReadBitMask) {
+    ptr_ver++;
+    ptr_obj++;
+    if (ptr_ver - versions >= size) // search out of bound, all versions are read
+      return 0;
+    int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+    uint64_t core_prog = util::Instance<PriorityTxnService>().GetProgress(core_id);
+    if (*ptr_ver >= core_prog)
+      return 0; // since giving out SID is apprxiamte, using core_prog as boundary is enough
+  }
+
+  if (*ptr_ver <= min)
+    return min;
+  return *ptr_ver;
 }
 
 bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t epoch_nr)
 {
+  if (!PriorityTxnService::g_tictoc_mode && PriorityTxnService::isPriorityTxn(sid)) {
+    // go to extra vhandle to find version
+    auto extra = extra_vhandle.load();
+    if (extra && (extra->WriteWithVersion(sid, obj)))
+      return true;
+    logger->critical("priority write failed, sid {}, extra {}", sid, (void*)extra);
+    std::abort();
+  }
+
   if (inline_used != 0xFF) __builtin_prefetch((uint8_t *) this + 128);
   // Finding the exact location
   int pos = latest_version.load();
   uint64_t *it = versions + pos + 1;
   if (*it != sid) {
-    it = std::lower_bound(versions + cur_start, versions + size, sid);
-    if (unlikely(it == versions + size || *it != sid)) {
+    if (!PriorityTxnService::g_tictoc_mode) {
+      it = std::lower_bound(versions + cur_start, versions + size, sid);
+    } else {
+      it = std::lower_bound(versions, versions + size, sid);
+      // tictoc's write to the linked list might have sid < cur_start (latest written version)
+      // therefore we cannot use this optimization when searching version array
+    }
+    if (it == versions + size || *it != sid) {
+      if (PriorityTxnService::g_tictoc_mode) {
+        // tictoc mode need to look at both array and extra linked list. array first
+        auto extra = extra_vhandle.load();
+        if (extra && (extra->WriteWithVersion(sid, obj)))
+          return true;
+        logger->critical("priority write failed, sid {}, extra {}", sid, (void*)extra);
+      }
+
       // sid is greater than all the versions, or the located lower_bound isn't sid version
       logger->critical("Diverging outcomes on {}! sid {} pos {}/{}", (void *) this,
                        sid, it - versions, size);
@@ -345,7 +592,8 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
   }
 
   if (latest == size - 1) {
-    nr_ondsplt = 0;
+    if (!NodeConfiguration::g_priority_txn || !PriorityTxnService::g_row_rts)
+      nr_ondsplt = 0;
     cont_affinity = -1;
   } else {
     if (GC::IsDataGarbage((VHandle *) this, obj) && gc_handle == 0) {
@@ -387,6 +635,7 @@ void SortedArrayVHandle::GarbageCollect()
 
   for (int i = 0; i < size - 1; i++) {
     VarStr *o = (VarStr *) objects[i];
+    o = (VarStr *) ((uintptr_t)o & ~kReadBitMask);
     delete o;
   }
 
@@ -410,6 +659,7 @@ SortedArrayVHandle *SortedArrayVHandle::NewInline()
 }
 
 mem::ParallelSlabPool BaseVHandle::pool;
+mem::ParallelSlabPool LinkedListExtraVHandle::Entry::pool;
 mem::ParallelSlabPool BaseVHandle::inline_pool;
 
 void BaseVHandle::InitPool()
@@ -419,6 +669,433 @@ void BaseVHandle::InitPool()
   pool.Register();
   inline_pool.Register();
 }
+
+#ifdef ARRAY_EXTRA_VHANDLE
+ArrayExtraVHandle::ArrayExtraVHandle()
+{
+  capacity = 4;
+  size.store(0);
+  this_coreid = alloc_by_regionid = mem::ParallelPool::CurrentAffinity();
+
+  versions = (uint64_t *) mem::GetDataRegion().Alloc(2 * capacity * sizeof(uint64_t));
+}
+
+bool ArrayExtraVHandle::AppendNewVersion(uint64_t sid)
+{
+  util::MCSSpinLock::QNode qnode;
+  lock.Lock(&qnode);
+
+  if (size > 0 && versions[size - 1] >= sid) {
+    lock.Unlock(&qnode);
+    return false;
+  }
+
+  size++;
+  if (unlikely(size >= capacity)) {
+    auto current_regionid = mem::ParallelPool::CurrentAffinity();
+    auto new_cap = 1U << (32 - __builtin_clz((unsigned int) size));
+    // ensure the pending reads doesn't stuck on old pending address
+    auto objects = versions + capacity;
+    for (int i = 0; i < size; ++i) {
+      if (util::Impl<VHandleSyncService>().IsPendingVal(objects[i])) {
+        util::Impl<VHandleSyncService>().OfferData(&objects[i], kRetryValue);
+      }
+    }
+    auto new_versions = EnlargePair64Array(versions, capacity, alloc_by_regionid, new_cap);
+    if (new_versions == nullptr) {
+      logger->critical("Memory allocation failure for extra array");
+      std::abort();
+    }
+    auto new_objects = new_versions + new_cap;
+    for (int i = 0; i < size; ++i) {
+      if (new_objects[i] == kRetryValue) {
+        new_objects[i] = kPendingValue;
+      }
+    }
+    versions = new_versions;
+    capacity = new_cap;
+    alloc_by_regionid = current_regionid;
+  }
+  std::fill(versions + capacity + size - 1, versions + capacity + size, kPendingValue);
+
+  versions[size - 1] = sid;
+
+  // no need to insertion sort, extra array is always appending in the back
+  // TODO: GC
+
+  // trace(TRACE_PRIORITY "txn sid {} - append on extra Vhandle {:p}, current size {}", sid, (void*)this, size.load());
+  lock.Unlock(&qnode);
+  return true;
+}
+
+// sid: txn's sid
+// ver: the version we found in the original version array
+// return: if the version in extra array is closer, the VarStr we read; else, nullptr
+VarStr *ArrayExtraVHandle::ReadWithVersion(uint64_t sid, uint64_t ver, SortedArrayVHandle* handle)
+{
+  util::MCSSpinLock::QNode qnode;
+  lock.Lock(&qnode);
+
+  uint64_t *p = versions;
+  uint64_t *start = versions;
+  uint64_t *end = versions + size;
+
+  p = std::lower_bound(start, end, sid);
+  if (p == versions) {
+    lock.Unlock(&qnode);
+    return nullptr;
+  }
+
+  int pos = --p - versions;
+  auto ver_extra = versions[pos];
+  if (ver_extra > ver) {
+    auto addr = versions + capacity + pos;
+    lock.Unlock(&qnode);
+    util::Impl<VHandleSyncService>().WaitForData(addr, sid, ver_extra, (void*) this);
+    auto varstr_ptr = *addr;
+    if (VHandleSyncService::IsIgnoreVal(varstr_ptr))
+      return handle->ReadWithVersion(ver_extra);
+    else if (varstr_ptr == kRetryValue) {
+      // trace(TRACE_PRIORITY "RETRY ACTUALLY HAPPENED! sid {} pos {} ver {} old versions {:p}", sid, pos, ver_extra, (void *)versions);
+      return this->ReadWithVersion(sid, ver, handle);
+    }
+    else
+      return (VarStr *) varstr_ptr;
+  } else {
+    lock.Unlock(&qnode);
+    return nullptr;
+  }
+}
+
+bool ArrayExtraVHandle::WriteWithVersion(uint64_t sid, VarStr *obj)
+{
+  util::MCSSpinLock::QNode qnode;
+  lock.Lock(&qnode);
+
+  // Finding the exact location
+  auto it = std::lower_bound(versions, versions + size, sid);
+  if (unlikely(it == versions + size || *it != sid)) {
+    // sid is greater than all the versions, or the located lower_bound isn't sid version
+    logger->critical("Diverging outcomes on extra array {}! sid {} pos {}/{}", (void *) this,
+                     sid, it - versions, size);
+    std::stringstream ss;
+    for (int i = 0; i < size; i++) {
+      ss << versions[i] << ' ';
+    }
+    logger->critical("Versions: {}", ss.str());
+    lock.Unlock(&qnode);
+    return false;
+  }
+
+  auto objects = versions + capacity;
+  volatile uintptr_t *addr = &objects[it - versions];
+
+  // Writing to exact location
+  util::Impl<VHandleSyncService>().OfferData(addr, (uintptr_t) obj);
+
+  lock.Unlock(&qnode);
+  return true;
+}
+#else
+LinkedListExtraVHandle::LinkedListExtraVHandle()
+    : head(nullptr), size(0)
+{
+  this_coreid = alloc_by_regionid = mem::ParallelPool::CurrentAffinity();
+}
+bool LinkedListExtraVHandle::RequiresLock(void) {
+  return PriorityTxnService::g_lock_insert || PriorityTxnService::g_hybrid_insert;
+}
+
+bool LinkedListExtraVHandle::AppendNewPriorityVersion(uint64_t sid)
+{
+  Entry *n = new Entry(sid, kPendingValue, mem::ParallelPool::CurrentAffinity());
+  if (PriorityTxnService::g_lock_insert) {
+    util::MCSSpinLock::QNode qnode;
+    lock.Lock(&qnode);
+    Entry dummy(LONG_MAX, kPendingValue, 0);
+    dummy.next = head;
+
+    Entry *cur = &dummy;
+    while (cur && cur->next && cur->next->version > sid)
+      cur = cur->next;
+    if (cur->next && cur->next->version == sid) {
+      delete n;
+      lock.Unlock(&qnode);
+      return false;
+    }
+    n->next = cur->next;
+    cur->next = n;
+    head = dummy.next;
+
+    size++;
+    lock.Unlock(&qnode);
+    return true;
+  }
+
+  Entry *old;
+  do {
+    old = head.load();
+    if (old && old->version >= sid) {
+      if (PriorityTxnService::g_hybrid_insert) {
+        // logger->info("sid {} on {:p} failed, goto lock", sid, (void*)this);
+        util::MCSSpinLock::QNode qnode;
+        lock.Lock(&qnode);
+        // after this, only lockless append could happen.
+        // say cur head is 10, want to insert 8, a new txn appended 12 locklessly
+        // it's still fine to use head 10 to find location for 8 and insert
+
+        Entry *cur = old; // will not replace head because sid < head.sid
+        while (cur && cur->next && cur->next->version > sid)
+          cur = cur->next;
+        if (cur->next && cur->next->version == sid) {
+          // for TicToc, reuse SID
+          delete n;
+          lock.Unlock(&qnode);
+          return false;
+        }
+        n->next = cur->next;
+        cur->next = n;
+        // logger->info("lock append sid {} on {:p}", sid, (void*)this);
+
+        size++;
+        lock.Unlock(&qnode);
+        return true;
+      }
+      delete n;
+      return false;
+    }
+    n->next = old;
+  } while (!head.compare_exchange_strong(old, n));
+
+  size++;
+  return true;
+}
+
+// return: if the version in extra array is closer, the VarStr we read; else, nullptr
+VarStr *LinkedListExtraVHandle::ReadWithVersion(uint64_t sid, uint64_t ver, SortedArrayVHandle* handle)
+{
+  util::MCSSpinLock::QNode qnode;
+  if (RequiresLock())
+    lock.Acquire(&qnode);
+
+  Entry *p = head;
+  while (p && (p->version > ver) && ((p->version >= sid) || (p->version < sid && VHandleSyncService::IsIgnoreVal(p->object))))
+    p = p->next;
+
+  if (RequiresLock()) lock.Release(&qnode);
+  if (!p)
+    return nullptr;
+
+  abort_if(p->version >= sid, "p->version >= sid, {} >= {}", p->version, sid);
+  auto ver_extra = p->version;
+  if (ver_extra < ver)
+    return nullptr;
+  volatile uintptr_t *addr = &p->object;
+
+  // mark read bit
+  uintptr_t oldval = *addr;
+  if (PriorityTxnService::g_read_bit && !(oldval & kReadBitMask)) {
+    uintptr_t newval = oldval | kReadBitMask;
+    while (!(oldval & kReadBitMask)) {
+      uintptr_t val = __sync_val_compare_and_swap(addr, oldval, newval);
+      if (val == oldval) break;
+      oldval = val;
+      newval = oldval | kReadBitMask;
+    }
+  }
+
+  util::Impl<VHandleSyncService>().WaitForData(addr, sid, ver_extra, (void *) this);
+  auto varstr_ptr = *addr & ~kReadBitMask;
+  if (VHandleSyncService::IsIgnoreVal(varstr_ptr))
+    return handle->ReadWithVersion(ver_extra);
+
+  return (VarStr *) varstr_ptr;
+}
+
+// bool& is_in:  true if the previous version is indeed in the extra array
+// return value: true if read bit is set
+bool LinkedListExtraVHandle::CheckReadBit(uint64_t sid, uint64_t ver, SortedArrayVHandle* handle, bool& is_in) {
+  abort_if(!PriorityTxnService::g_read_bit, "ExtraVHandle CheckReadBit() is called when read bit is off");
+  util::MCSSpinLock::QNode qnode;
+  if (RequiresLock())
+    lock.Acquire(&qnode);
+  is_in = false;
+  Entry *p = head;
+  while (p && ((p->version >= sid) || (p->version < sid && VHandleSyncService::IsIgnoreVal(p->object))))
+    p = p->next;
+
+  if (RequiresLock()) lock.Release(&qnode);
+  if (!p)
+    return false;
+
+  auto ver_extra = p->version;
+  if (ver_extra < ver)
+    return false;
+
+  is_in = true;
+  auto varstr_ptr = p->object;
+  if (varstr_ptr == kPendingValue)
+    return false; // if it's not written, it couldn't be read
+  if (PriorityTxnService::g_last_version_patch && p == head && (varstr_ptr & kReadBitMask)) {
+    // last version is read
+    uint64_t rts = ((uint64_t)(handle->GetRowRTS()) << 8) + 1;
+    auto wts = sid;
+    return wts <= rts;
+  }
+  return varstr_ptr & kReadBitMask;
+}
+
+bool LinkedListExtraVHandle::IsExistingVersion(uint64_t sid)
+{
+  util::MCSSpinLock::QNode qnode;
+  if (RequiresLock())
+    lock.Acquire(&qnode);
+
+  Entry *p = head;
+  while (p && p->version > sid)
+    p = p->next;
+  if (RequiresLock()) lock.Release(&qnode);
+
+  if (!p || p->version != sid) {
+    return false;
+  }
+  return true;
+}
+
+/** @brief Find the lower bound of the last consecutive unread versions.
+    For example: 6r <- 11 <- 14r <- 16 <- 18, return 16.
+    @param min search lower bound
+    @return the SID of the version.
+    if answer found is smaller than min, return min;
+    if all versions are read, return 0. */
+uint64_t LinkedListExtraVHandle::FindUnreadVersionLowerBound(uint64_t min)
+{
+  Entry dummy(0, 0, 0);
+  dummy.next = head;
+  Entry *cur = &dummy;
+  while (cur->next && !(cur->next->object & kReadBitMask)) {
+    cur = cur->next;
+    if (cur->version <= min)
+      return min;
+  }
+  if (cur == &dummy)
+    return 0;
+  return cur->version;
+}
+
+// if no unread version can be found in the range of [min, core_prog) can be found, return 0.
+uint64_t LinkedListExtraVHandle::FindFirstUnreadVersion(uint64_t min)
+{
+  util::MCSSpinLock::QNode qnode;
+  if (RequiresLock())
+    lock.Acquire(&qnode);
+  Entry dummy(0, 0, 0);
+  dummy.next = head;
+  Entry *cur = &dummy;
+  uint64_t last_unread = ~0; // last unread SID in the linked list
+  while (cur->next && cur->next->version >= min) {
+    // tricky, since linked list SID is in descending order
+    cur = cur->next;
+    if (!(cur->object & kReadBitMask)) {
+      abort_if(last_unread < cur->version, "what? last_unread < cur->version");
+      last_unread = cur->version;
+    }
+  }
+
+  if (cur->next && cur->next->version < min && !(cur->next->object & kReadBitMask))
+  {
+    if (RequiresLock()) lock.Release(&qnode);
+    return min; // special case: if the version before min is unread, we can use min
+  }
+  if (RequiresLock()) lock.Release(&qnode);
+  if (last_unread == ~0)
+    return 0;
+  int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+  uint64_t core_prog = util::Instance<PriorityTxnService>().GetProgress(core_id);
+  if (last_unread >= core_prog)
+    return 0;
+  return last_unread;
+}
+
+bool LinkedListExtraVHandle::WriteWithVersion(uint64_t sid, VarStr *obj)
+{
+  util::MCSSpinLock::QNode qnode;
+  if (RequiresLock())
+    lock.Acquire(&qnode);
+
+  Entry *p = head;
+  while (p && p->version > sid)
+    p = p->next;
+
+  if (!p || p->version != sid) {
+    logger->critical("Diverging outcomes! sid {}", sid);
+    std::stringstream ss;
+    Entry *p = head;
+    while (p) {
+      ss << "{" << std::dec << p->version << "(hex" << std::hex << p->version <<"), 0x" << std::hex << p->object << "}->";
+      p = p->next;
+    }
+    logger->critical("Extra Linked list: {}nullptr", ss.str());
+    if (RequiresLock()) lock.Release(&qnode);
+    return false;
+  }
+
+  if (RequiresLock()) lock.Release(&qnode);
+  volatile uintptr_t *addr = &p->object;
+  util::Impl<VHandleSyncService>().OfferData(addr, (uintptr_t) obj);
+  return true;
+}
+
+void LinkedListExtraVHandle::GarbageCollect()
+{
+  // GC all but one version: largest version with actual value (not ignore)
+  Entry *cur = this->head.load();
+  while (cur) {
+    if (!VHandleSyncService::IsIgnoreVal(cur->object)) {
+      // found the version to keep, start GC
+      Entry *front = head, *behind = cur->next;
+      while (front && front != cur) {
+        if (!VHandleSyncService::IsIgnoreVal(front->object)) {
+          VarStr *o = (VarStr *) front->object;
+          o = (VarStr *) ((uintptr_t)o & ~kReadBitMask);
+          delete o;
+        }
+        Entry *temp = front->next;
+        delete front;
+        front = temp;
+      }
+      while (behind) {
+        if (!VHandleSyncService::IsIgnoreVal(behind->object)) {
+          VarStr *o = (VarStr *) behind->object;
+          o = (VarStr *) ((uintptr_t)o & ~kReadBitMask);
+          delete o;
+        }
+        Entry *temp = behind->next;
+        delete behind;
+        behind = temp;
+      }
+      cur->next = nullptr;
+      this->head = cur;
+      this->size = 1;
+      return;
+    } else {
+      // keep trying to find the version to keep
+      cur = cur->next;
+    }
+  }
+
+  // if it reaches here, it means cur == nullptr, all Entry are ignore value
+  cur = this->head.load();
+  while (cur) {
+    Entry *temp = cur->next;
+    delete cur;
+    cur = temp;
+  }
+  this->head = nullptr;
+  this->size = 0;
+}
+
+#endif
 
 #ifdef LL_REPLAY
 

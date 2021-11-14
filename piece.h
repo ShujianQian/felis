@@ -18,6 +18,7 @@ struct PieceRoutine {
   uint32_t capture_len;
   uint8_t level;
   uint8_t node_id;
+  bool is_priority; // is it a piece from priority transaction
   uint64_t sched_key; // Optional. 0 for unset. For scheduling only.
   uint64_t affinity; // Which core to run on. -1 means not specified. >= nr_threads means random.
 
@@ -108,6 +109,8 @@ class PromiseRoutineTransportService {
   virtual uint8_t GetNumberOfNodes() { return 0; }
 };
 
+
+class PriorityTxn;
 class PromiseRoutineDispatchService {
  public:
 
@@ -126,12 +129,19 @@ class PromiseRoutineDispatchService {
     }
   };
 
-  virtual void Add(int core_id, PieceRoutine **r, size_t nr_routines) = 0;
+  enum CompleteType {
+    BatchPiece,
+    PriorityPiece,
+    PriorityInit,
+  };
+  virtual void Add(int core_id, PieceRoutine **r, size_t nr_routines, bool from_pri = false) = 0;
+  virtual void Add(int core_id, PriorityTxn *t) = 0;
   virtual void AddBubble() = 0;
   virtual bool Preempt(int core_id, BasePieceCollection::ExecutionRoutine *state) = 0;
   virtual bool Peek(int core_id, DispatchPeekListener &should_pop) = 0;
+  virtual bool Peek(int core_id, PriorityTxn *&txn, bool dry_run = false) = 0;
   virtual void Reset() = 0;
-  virtual void Complete(int core_id) = 0;
+  virtual void Complete(int core_id, CompleteType type = BatchPiece) = 0;
   virtual bool IsRunning(int core_id) = 0;
   virtual bool IsReady(int core_id) = 0;
 

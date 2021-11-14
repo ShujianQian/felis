@@ -3,6 +3,7 @@
 #include "epoch.h"
 #include "routine_sched.h"
 #include "pwv_graph.h"
+#include "priority.h"
 
 namespace felis {
 
@@ -41,6 +42,7 @@ void ConservativePriorityScheduler::IngestPending(PriorityQueueHashEntry *hent, 
 {
   if (hent->values.empty()) {
     q[len++] = {hent->key, hent};
+    // HeapEntry contains HashEntry
     std::push_heap(q, q + len, Greater);
   }
   value->InsertAfter(hent->values.prev);
@@ -49,9 +51,11 @@ void ConservativePriorityScheduler::IngestPending(PriorityQueueHashEntry *hent, 
 bool ConservativePriorityScheduler::ShouldPickWaiting(const WaitState &ws)
 {
   if (len == 0)
+    // if nothing in PQ, run the waitstate coroutine
     return true;
   if (q[0].key > ws.sched_key)
     return true;
+    // if waitstate coroutine has higher priority, run coroutine
   return false;
 }
 
@@ -63,9 +67,12 @@ PriorityQueueValue *ConservativePriorityScheduler::Pick()
 void ConservativePriorityScheduler::Consume(PriorityQueueValue *node)
 {
   node->Remove();
+  // remove the piece from HashEntry
   auto top = q[0];
   if (top.ent->values.empty()) {
+    // if the top HashEntry is empty
     std::pop_heap(q, q + len, Greater);
+    // pop the top HashEntry from the heap
     q[len - 1].ent = nullptr;
     len--;
     top.ent->Remove(); // from the hashtable
@@ -310,8 +317,11 @@ const size_t EpochExecutionDispatchService::kHashTableSize = 100001;
 EpochExecutionDispatchService::EpochExecutionDispatchService()
 {
   auto max_item_percore = g_max_item / NodeConfiguration::g_nr_threads;
+  auto max_txn_percore = PriorityTxnService::g_queue_length / NodeConfiguration::g_nr_threads;
   logger->info("{} per_core pool capacity {}, element size {}",
                (void *) this, max_item_percore, kPriorityQueuePoolElementSize);
+  logger->info("{} per_core priority transaction queue length {}",
+               (void *) this, max_txn_percore);
   Queue *qmem = nullptr;
 
   for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
@@ -350,7 +360,7 @@ EpochExecutionDispatchService::EpochExecutionDispatchService()
     queue->pq.pending.start = 0;
     queue->pq.pending.end = 0;
 
-    queue->pq.waiting.off = queue->pq.waiting.len = 0;
+    queue->pq.waiting.len = 0;
 
     for (size_t t = 0; t < kHashTableSize; t++) {
       queue->pq.ht[t].Initialize();
@@ -360,6 +370,16 @@ EpochExecutionDispatchService::EpochExecutionDispatchService()
     queue->pq.brk = mem::Brk(
         mem::AllocMemory(mem::EpochQueueItem, brk_sz, numa_node),
         brk_sz);
+
+    queue->tq.start = queue->tq.end = 0;
+    queue->tq.q = nullptr;
+    if (NodeConfiguration::g_priority_txn) {
+      queue->tq.q = (PriorityTxn *)
+                   mem::AllocMemory(
+                       mem::EpochQueueItem,
+                       max_txn_percore * sizeof(PriorityTxn),
+                       numa_node);
+    }
 
     new (&queue->state) State();
     new (&queue->lock) util::SpinLock();
@@ -386,7 +406,7 @@ void EpochExecutionDispatchService::Reset()
 
 
 void EpochExecutionDispatchService::Add(int core_id, PieceRoutine **routines,
-                                        size_t nr_routines)
+                                        size_t nr_routines, bool from_pri)
 {
   auto &lock = queues[core_id]->lock;
   lock.Lock();
@@ -428,6 +448,34 @@ again:
     pq.end.fetch_add(pdelta, std::memory_order_release);
   lock.Unlock();
   // util::Impl<VHandleSyncService>().Notify(1 << core_id);
+
+  if (NodeConfiguration::g_priority_txn) {
+    if (from_pri) {
+      util::Instance<PriorityTxnService>().PriPcCnt[core_id]->Increment(nr_routines);
+      ProcessPending(queues[core_id]->pq);
+    } else {
+      util::Instance<PriorityTxnService>().BatchPcCnt[core_id]->Increment(nr_routines);
+    }
+  }
+}
+
+void EpochExecutionDispatchService::Add(int core_id, PriorityTxn *txn)
+{
+  auto &lock = queues[core_id]->lock;
+  lock.Lock();
+
+  auto &tq = queues[core_id]->tq;
+
+  size_t tlimit = PriorityTxnService::g_queue_length / NodeConfiguration::g_nr_threads,
+            pos = tq.end.load(std::memory_order_acquire);
+  abort_if(pos >= tlimit,
+           "Preallocation of priority txn queue is too small. {} < {}", pos, tlimit);
+
+  tq.q[pos] = *txn;
+  tq.end.fetch_add(1, std::memory_order_release);
+  lock.Unlock();
+
+  // trace(TRACE_PRIORITY "Priority txn {:p} - copied to queue {} at pos {}", (void*)txn, core_id, pos);
 }
 
 void
@@ -437,28 +485,39 @@ EpochExecutionDispatchService::AddToPriorityQueue(
 {
   bool smaller = false;
   auto node = (PriorityQueueValue *) q.brk.Alloc(64);
+  // PQ Value is the piece
   node->Initialize();
   node->routine = rt;
   node->state = state;
   auto key = rt->sched_key;
 
+  // HashHeader stores all the HashEntry with the same key>>8.
+  // HashEntry stores all the piece with the same SID.
   auto &hl = q.ht[Hash(key) % kHashTableSize];
   auto *ent = hl.next;
   while (ent != &hl) {
+    // looped linked list, till the end
     if (ent->object()->key == key) {
+      // found this txn's HashEntry
       goto found;
     }
     ent = ent->next;
   }
 
+  // first piece of this txn, create HashEntry
   ent = (PriorityQueueHashEntry *) q.brk.Alloc(64);
   ent->Initialize();
+  // Initialize() is prev = next = this
   ent->object()->key = key;
   ent->object()->values.Initialize();
+  // the linked list for all the pieces of this txn
   ent->InsertAfter(hl.prev);
+  // insert this HashEntry after the tail of the HashHeader
 
 found:
+  // insert HashEntry into Heap, and insert the piece into the HashEntry
   q.sched_pol->IngestPending(ent->object(), node);
+  // heap array inside scheduling policy
 }
 
 void
@@ -477,6 +536,29 @@ EpochExecutionDispatchService::ProcessPending(PriorityQueue &q)
   }
 }
 
+void EpochExecutionDispatchService::ProcessBatchCounter(int core_id)
+{
+  if (!NodeConfiguration::g_priority_txn)
+    return;
+  auto &state = queues[core_id]->state;
+  auto &bc = state.batch_complete_counter;
+  auto cnt = bc.completed;
+  util::Instance<PriorityTxnService>().BatchPcCnt[core_id]->Decrement(cnt);
+  bc.completed = 0;
+}
+
+
+// Peek the ZeroQueue and PQ to see if we have anything for this routine to run.
+// if current ExecutionRoutine has more thing to run, return true
+// if not (for instance you're temporarily spawned, or the q is empty), return false
+
+// should_pop: callback function, use `BasePieceCollection::ExecutionRoutine *state`
+// to determine should we pop another PieceRoutine from the queue (for current to execute).
+//   para1: PieceRoutine, Peek() should pass the next routine to run
+//   para2: ExecutionRoutine*, the state along with the previous PromiseRoutine
+
+// the executionRoutines are stored in pq.waiting.states (WaitState, WaitState.state is ExecutionRoutine*)
+// pq.state stores the state of the core (kSleeping, kRunning, kDeciding)
 bool
 EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_pop)
 {
@@ -505,12 +587,15 @@ retry:
     }
     return false;
   }
+  // ZeroQueue has no piece to run
+
 
   // Setting state.running without poking around the data structure is very
   // important for performance. This let other thread create the co-routines
   // without spinning for State::kDeciding for a long time.
   if (q.sched_pol->empty() && q.waiting.len == 0
       && q.pending.end.load() == q.pending.start.load()) {
+      // PQ has no piece, no coroutine waiting, pending has no piece
     state.running = State::kSleeping;
   } else {
     state.running = State::kRunning;
@@ -519,14 +604,15 @@ retry:
   ProcessPending(q);
   if (q.sched_pol->ShouldRetryBeforePick(&zq.start, &zq.end, &q.pending.start, &q.pending.end))
     goto retry;
+    // Caracal ConservativePriorityScheduler does not retry
 
-  auto &ws = q.waiting.states[q.waiting.off];
+  // check whether to run the waiting coroutine
   if (q.waiting.len > 0
       && (q.waiting.len == kOutOfOrderWindow
-          || q.sched_pol->ShouldPickWaiting(q.waiting.states[q.waiting.off]))) {
-    // TODO: is this right?
+          || q.sched_pol->ShouldPickWaiting(q.waiting.states[q.waiting.len - 1]))) {
+    auto &ws = q.waiting.states[q.waiting.len - 1];
+    // q.waiting should be a stack so we don't get priority inversion
     if (should_pop(nullptr, ws.state)) {
-      q.waiting.off = (q.waiting.off + 1) % kOutOfOrderWindow;
       q.waiting.len--;
       state.current_sched_key = ws.sched_key;
       state.ts++;
@@ -535,10 +621,13 @@ retry:
     return false;
   }
 
+  // if PQ not empty
   if (!q.sched_pol->empty()) {
     auto node = q.sched_pol->Pick();
+    // PQValue*
     auto &rt = node->routine;
 
+    // even should_pop(rt, nullptr) works, PQ has no pending pieces
     if (should_pop(rt, node->object()->state)) {
       q.sched_pol->Consume(node);
       state.current_sched_key = rt->sched_key;
@@ -569,6 +658,66 @@ retry:
           core_id, n, nr_bubbles);
     comp->Complete(n + nr_bubbles);
   }
+
+  this->ProcessBatchCounter(core_id);
+  return false;
+}
+
+bool EpochExecutionDispatchService::Peek(int core_id, PriorityTxn *&txn, bool dry_run)
+{
+  if (!NodeConfiguration::g_priority_txn)
+    return false;
+
+  // hacks: for the time being we don't have occ yet, so only run priority txns
+  //        during execution phase's pieces execution.
+  // hack 1: if still during issuing, don't run
+  if (!IsReady(core_id)) {
+    return false;
+  }
+
+  // hack 2: if on this core, no batched pieces of this epoch has ever been run
+  // (which leads to prog not being updated), don't run
+  uint64_t prog = util::Instance<PriorityTxnService>().GetProgress(core_id);
+  if (prog >> 32 != util::Instance<EpochManager>().current_epoch_nr())
+    return false;
+
+  // hack 3: make sure pq doesn't get run after this core has no piece to run
+  if (queues[core_id]->pq.sched_pol->len == 0)
+    return false;
+  this->ProcessBatchCounter(core_id);
+  if (util::Instance<PriorityTxnService>().BatchPcCnt[core_id]->Get() == 0)
+    return false;
+
+  auto &tq = queues[core_id]->tq;
+  auto tstart = tq.start.load(std::memory_order_acquire);
+  if (tstart < tq.end.load(std::memory_order_acquire)) {
+    PriorityTxn *candidate = tq.q + tstart;
+    auto epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
+    if (candidate->epoch != epoch_nr) {
+
+      // hack 4: if a priority txn is from a previous epoch, skip it
+      if (candidate->epoch < epoch_nr) {
+        auto from = tstart;
+        while (tstart < tq.end.load(std::memory_order_acquire) && candidate->epoch < epoch_nr)
+          candidate = tq.q + ++tstart;
+        tq.start.store(tstart, std::memory_order_release);
+        // trace(TRACE_PRIORITY "core {} SKIPPED from pos {} ({}) to pos {} ({})", core_id, from, from * 32 + core_id + 1, tstart, tstart * 32 + core_id + 1);
+      }
+
+      return false;
+    }
+
+    if (__rdtsc() - PriorityTxnService::g_tsc < candidate->delay)
+      return false;
+    if (!dry_run) {
+      tq.start.store(tstart + 1, std::memory_order_release);
+      txn = candidate;
+      EpochClient::g_workload_client->completion_object()->Increment(1);
+    }
+
+    // trace(TRACE_PRIORITY "core {} peeked on pos {} (pri id {}), txn {:p}", core_id, tstart, tstart * 32 + core_id + 1, (void*)txn);
+    return true;
+  }
   return false;
 }
 
@@ -577,6 +726,10 @@ void EpochExecutionDispatchService::AddBubble()
   tot_bubbles.fetch_add(1);
 }
 
+// return: whether you should spawn a new coroutine.
+//  if pieces with smaller priority exists in the PQ, then put the
+//   ExecutionRoutine into the pq->waiting, and return true;
+//  if not, return false.
 bool EpochExecutionDispatchService::Preempt(int core_id, BasePieceCollection::ExecutionRoutine *routine_state)
 {
   auto &lock = queues[core_id]->lock;
@@ -593,10 +746,21 @@ bool EpochExecutionDispatchService::Preempt(int core_id, BasePieceCollection::Ex
 
   abort_if(q.waiting.len == kOutOfOrderWindow, "out-of-order scheduling window is full");
 
-  auto &ws = q.waiting.states[(q.waiting.off + q.waiting.len) % kOutOfOrderWindow];
+  auto &ws = q.waiting.states[q.waiting.len];
   ws.preempt_ts = state.ts;
   ws.sched_key = state.current_sched_key;
   ws.state = routine_state;
+  // store everything first
+
+  PriorityTxn* tmp = nullptr;
+  if (NodeConfiguration::g_priority_txn &&
+      PriorityTxnService::g_priority_preemption &&
+      this->Peek(core_id, tmp, true)) {
+    abort_if(tmp != nullptr, "dry run didn't come out dry");
+    q.waiting.len++;
+    // enqueue this coroutine
+    return true;
+  }
 
   // There is nothing to switch to!
   if (q.waiting.len == 0 && q.sched_pol->ShouldPickWaiting(ws))
@@ -606,11 +770,17 @@ bool EpochExecutionDispatchService::Preempt(int core_id, BasePieceCollection::Ex
   return true;
 }
 
-void EpochExecutionDispatchService::Complete(int core_id)
+void EpochExecutionDispatchService::Complete(int core_id, CompleteType type)
 {
   auto &state = queues[core_id]->state;
   auto &c = state.complete_counter;
   c.completed++;
+  if (type == CompleteType::BatchPiece) {
+    auto &bc = state.batch_complete_counter;
+    bc.completed++;
+  } else if (type == CompleteType::PriorityPiece){
+    util::Instance<PriorityTxnService>().PriPcCnt[core_id]->Decrement(1);
+  }
 }
 
 int EpochExecutionDispatchService::TraceDependency(uint64_t key)

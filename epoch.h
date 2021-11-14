@@ -206,6 +206,7 @@ class EpochClient {
    * \brief Start benchmark.
    */
   void Start();
+  const PerfLog& GetPerf() { return perf; }
 
   auto completion_object() { return &completion; }
   EpochWorkers *get_worker(int core_id) { return workers[core_id]; }
@@ -219,6 +220,10 @@ class EpochClient {
    */
   unsigned long NumberOfTxns() {
     // return LoadPercentage() * kTxnPerEpoch / 100;
+    if (NodeConfiguration::g_priority_batch_mode) {
+      auto pct = NodeConfiguration::g_priority_batch_mode_pct;
+      return (g_txn_per_epoch * (100 + pct)) / 100;
+    }
     return g_txn_per_epoch;
   };
 

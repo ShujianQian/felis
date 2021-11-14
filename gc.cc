@@ -297,8 +297,11 @@ size_t GC::Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit)
   }
 
   for (auto j = 0; j < i; j++) {
+    if (VHandleSyncService::IsIgnoreVal(objects[j])) continue;
     auto p = (VarStr *) objects[j];
+    p = (VarStr *) ((uintptr_t)p & ~kReadBitMask);
     auto next = (VarStr *) objects[j + 1];
+    next = (VarStr *) ((uintptr_t)next & ~kReadBitMask);
     FreeIfGarbage(handle, p, next);
   }
 
@@ -307,6 +310,10 @@ size_t GC::Collect(VHandle *handle, uint64_t cur_epoch_nr, size_t limit)
   handle->size -= i;
   handle->cur_start -= i;
   handle->latest_version.fetch_sub(i);
+
+  auto extra = handle->extra_vhandle.load();
+  if (extra)
+    extra->GarbageCollect();
 
   if (is_trace_enabled(TRACE_GC)) {
     trace(TRACE_GC "GC on row {} {}", (void *) handle, handle->ToString());
