@@ -97,11 +97,14 @@ class BasePieceCollection {
 
 static_assert(sizeof(BasePieceCollection) % CACHE_LINE_SIZE == 0, "BasePromise is not cache line aligned");
 
+class BaseFutureValue;
+
 class PromiseRoutineTransportService {
  public:
   static constexpr size_t kPromiseMaxLevels = 16;
 
   virtual void TransportPromiseRoutine(PieceRoutine *routine) = 0;
+  virtual void TransportFutureValue(BaseFutureValue *val) {}
   virtual bool PeriodicIO(int core) { return false; }
   virtual void PrefetchInbound() {};
   virtual void FinishCompletion(int level) {}

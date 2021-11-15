@@ -184,7 +184,6 @@ class BaseFutureValue {
  public:
   static constexpr uint8_t kMaxSubscription = 6;
  protected:
-   protected:
   std::atomic_bool ready = false;
   uint8_t nr_nodes = 0;
   uint8_t nodes[kMaxSubscription];
@@ -201,6 +200,8 @@ class BaseFutureValue {
   virtual size_t EncodeSize() { return 0; }
   virtual void EncodeTo(uint8_t *buf) {}
   virtual void DecodeFrom(const uint8_t *buf) {}
+  uint8_t nr_subscribed_nodes() const { return nr_nodes; }
+  uint8_t subscribed_node(uint8_t idx) const { return nodes[idx]; }
  protected:
   GenericEpochObject<BaseFutureValue> ConvertToEpochObject() { return EpochObject::Convert(this); }
 };

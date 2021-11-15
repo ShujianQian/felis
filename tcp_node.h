@@ -33,6 +33,7 @@ class TcpNodeTransport : public PromiseRoutineTransportService {
   TcpNodeTransport();
 
   void TransportPromiseRoutine(PieceRoutine *routine) final override;
+  void TransportFutureValue(BaseFutureValue *val) final override;
   void FinishCompletion(int level) final override;
   bool PeriodicIO(int core) final override;
   void PrefetchInbound() final override;

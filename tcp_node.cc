@@ -3,6 +3,7 @@
 #include "shipping.h"
 #include "slice.h"
 #include "console.h"
+#include "txn.h"
 #include "gopp/gopp.h"
 #include "gopp/channels.h"
 #include "epoch.h"
@@ -468,6 +469,24 @@ void TcpNodeTransport::TransportPromiseRoutine(PieceRoutine *routine)
     ltp.TransportPromiseRoutine(routine);
   }
   meta.AddRoute(dst_node);
+}
+
+void TcpNodeTransport::TransportFutureValue(BaseFutureValue *val)
+{
+  auto &conf = node_config();
+
+  for (uint8_t i = 0; i < val->nr_subscribed_nodes(); i++) {
+    auto node = val->subscribed_node(i);
+    if (node == conf.node_id()) continue;
+
+    auto out = outgoing_channels.at(node);
+    size_t buffer_size = val->EncodeSize();
+    // TODO: Fill in the correct buffer_size
+    auto *buffer = out->Alloc(buffer_size);
+    // TODO: Fill in the data here in the buffer pointer. After that, make sure
+    // you call the Finish() function.
+    out->Finish(buffer_size);
+  }
 }
 
 void TcpNodeTransport::FinishCompletion(int level)
