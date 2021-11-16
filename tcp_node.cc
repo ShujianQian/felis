@@ -319,7 +319,7 @@ size_t ReceiverChannel::PollRoutines(PieceRoutine **routines, size_t cnt)
       memcpy(&epoch_nr, buf+8, sizeof(uint64_t));
       memcpy(&node_id, buf+16, sizeof(int));
       memcpy(&offset, buf+16+sizeof(int), sizeof(uint64_t));
-      header -= 24+sizeof(int);
+      header -= 24+sizeof(int); //don't really need this line
       
       //I think I'm doing this bit wrong
       BaseFutureValue* localFuture = (BaseFutureValue *) util::Instance<EpochManager>().ptr(epoch_nr,node_id,offset);
