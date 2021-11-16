@@ -221,6 +221,7 @@ template <typename T> class GenericEpochObject;
 
 class EpochObject {
   friend class Epoch;
+  friend class TcpNodeTransport;
  protected:
   uint64_t epoch_nr;
   int node_id;

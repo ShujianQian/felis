@@ -306,6 +306,27 @@ size_t ReceiverChannel::PollRoutines(PieceRoutine **routines, size_t cnt)
       in->Skip(buflen);
 
       transport->OnCounterReceived();
+    } else if ((header & 0xFFFF000000000000) == ((uint64_t)2<<55) ){ //lets use the upper 2 bytes of the header as a flag
+      header -= ((uint64_t)2<<55);
+      auto buflen = 8 + header;
+      auto buf = (uint8_t *) alloca(buflen);
+      if (in->Peek(buf, buflen) < buflen) {
+        break;
+      }
+      uint64_t epoch_nr;
+      int node_id;
+      uint64_t offset;
+      memcpy(&epoch_nr, buf+8, sizeof(uint64_t));
+      memcpy(&node_id, buf+16, sizeof(int));
+      memcpy(&offset, buf+16+sizeof(int), sizeof(uint64_t));
+      header -= 24+sizeof(int);
+      
+      //I think I'm doing this bit wrong
+      BaseFutureValue* localFuture = (BaseFutureValue *) util::Instance<EpochManager>().ptr(epoch_nr,node_id,offset);
+
+      localFuture->DecodeFrom(buf+24+sizeof(int));
+      localFuture->setReady();
+
     } else {
       abort_if(header % 8 != 0, "header isn't aligned {}", header);
       auto buflen = 8 + header;
@@ -480,11 +501,25 @@ void TcpNodeTransport::TransportFutureValue(BaseFutureValue *val)
     if (node == conf.node_id()) continue;
 
     auto out = outgoing_channels.at(node);
+    //Fill in the correct buffer_size
     size_t buffer_size = val->EncodeSize();
-    // TODO: Fill in the correct buffer_size
-    auto *buffer = out->Alloc(buffer_size);
-    // TODO: Fill in the data here in the buffer pointer. After that, make sure
+    buffer_size += 3 * sizeof(uint64_t); //header, epoch, offset
+    buffer_size += sizeof(int); //node id
+    
+    uint8_t *buffer = (uint8_t *) out->Alloc(buffer_size);
+    // Fill in the data here in the buffer pointer. After that, make sure
     // you call the Finish() function.
+    uint64_t header = buffer_size - 8 + ((uint64_t)2<<55); // 2^56 is our flag
+
+    //this bit might also be wrong
+    GenericEpochObject<BaseFutureValue> epochInfo = val->ConvertToEpochObject();
+
+    memcpy(buffer,&header,8);
+    memcpy(buffer+8,&(epochInfo.epoch_nr),8);
+    memcpy(buffer+16,&(epochInfo.node_id),sizeof(int));
+    memcpy(buffer+16+sizeof(int),&(epochInfo.offset),8);
+    val->EncodeTo(buffer+24+sizeof(int));
+
     out->Finish(buffer_size);
   }
 }

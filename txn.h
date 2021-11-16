@@ -181,6 +181,7 @@ class BaseTxn {
 };
 
 class BaseFutureValue {
+  friend class TcpNodeTransport;
  public:
   static constexpr uint8_t kMaxSubscription = 6;
  protected:
@@ -202,6 +203,7 @@ class BaseFutureValue {
   virtual void DecodeFrom(const uint8_t *buf) {}
   uint8_t nr_subscribed_nodes() const { return nr_nodes; }
   uint8_t subscribed_node(uint8_t idx) const { return nodes[idx]; }
+  void setReady() { ready = true; } //helper to set the ready flag
  protected:
   GenericEpochObject<BaseFutureValue> ConvertToEpochObject() { return EpochObject::Convert(this); }
 };
