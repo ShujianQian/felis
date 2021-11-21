@@ -197,7 +197,10 @@ class BaseFutureValue {
   }
   void Signal();
   void Wait();
-  void Subscribe(uint8_t node) { nodes[nr_nodes++] = node; }
+  void Subscribe(uint8_t node) {
+    abort_if(nr_nodes >= kMaxSubscription, "nr_nodes exceeds max subscription limit");
+    nodes[nr_nodes++] = node;
+  }
   virtual size_t EncodeSize() { return 0; }
   virtual void EncodeTo(uint8_t *buf) {}
   virtual void DecodeFrom(const uint8_t *buf) {}
