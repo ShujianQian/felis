@@ -120,9 +120,15 @@ class FutureValue final : public BaseFutureValue {
   using ValueType = T;
   FutureValue() : BaseFutureValue() {}
   FutureValue(const FutureValue<T> &rhs) : value(rhs.value) {
+    this->operator=(rhs);
+  }
+
+  const FutureValue<T> &operator=(const FutureValue<T> &rhs) {
     ready = rhs.ready.load();
     value = rhs.value;
+    return *this;
   }
+
   void Signal(T v) {
     value = v;
     BaseFutureValue::Signal();

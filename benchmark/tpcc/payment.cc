@@ -223,20 +223,23 @@ void PaymentTxn::Run()
             aff);
       }
     } else {
-      // Notify this node when warehouse_tax has a value. If node is the local
-      // node, then Signal() should simply flip the boolean flag anyway.
-      state->warehouse_tax_future.Subscribe(node);
-
       root->AttachRoutine(
-          MakeContext(bitmap, payment_amount), node,
+          MakeContext(bitmap, payment_amount, customer_warehouse_id), node,
           [](const auto &ctx) {
-            auto &[state, index_handle, bitmap, payment_amount] = ctx;
+            auto &[state, index_handle, bitmap, payment_amount, customer_warehouse_id] = ctx;
 
             if (bitmap & 0x01) {
               TxnRow vhandle = index_handle(state->warehouse);
               auto w = vhandle.Read<Warehouse::Value>();
               w.w_ytd += payment_amount;
               vhandle.Write(w);
+              // Notify this node when warehouse_tax has a value. If
+              // customer_node is the local node, then Signal() should simply
+              // flip the boolean flag without transfer value over the network.
+              int customer_node = TpccSliceRouter::SliceToNodeId(
+                  g_tpcc_config.WarehouseToSliceId(customer_warehouse_id));
+              state->warehouse_tax_future.Subscribe(customer_node);
+
               state->warehouse_tax_future.Signal(w.w_tax);
               ClientBase::OnUpdateRow(state->warehouse);
             }
@@ -252,7 +255,8 @@ void PaymentTxn::Run()
             if (bitmap & 0x04) {
               TxnRow vhandle = index_handle(state->customer);
               auto c = vhandle.Read<Customer::Value>();
-              auto tax = state->warehouse_tax_future.Wait();
+              // auto tax = state->warehouse_tax_future.Wait();
+              auto tax = 0;
               auto amount = payment_amount + payment_amount * tax / 100;
 
               c.c_balance -= amount;

@@ -166,6 +166,7 @@ void DeliveryTxn::Run()
 
   for (int i = 0; i < 10; i++) {
     int16_t sum_node = -1, customer_node = -1;
+
     for (auto &p: state->nodes[i]) {
       auto [node, bitmap] = p;
       if (bitmap & (1 << 0)) sum_node = node;
@@ -182,7 +183,6 @@ void DeliveryTxn::Run()
       };
 
       static auto constexpr UpdateOOrder = [](auto state, auto index_handle, int i, uint carrier_id) -> void {
-        // logger->info("row {} district {} sid {}", (void *) state->oorders[i], district_id, index_handle.serial_id());
         auto oorder = index_handle(state->oorders[i]).template Read<OOrder::Value>();
         oorder.o_carrier_id = carrier_id;
         index_handle(state->oorders[i]).WriteTryInline(oorder);
@@ -193,6 +193,7 @@ void DeliveryTxn::Run()
         int sum = 0;
         for (int j = 0; j < 15; j++) {
           if (state->order_lines[i][j] == nullptr) break;
+
           auto handle = index_handle(state->order_lines[i][j]);
           auto ol = handle.template Read<OrderLine::Value>();
           sum += ol.ol_amount;

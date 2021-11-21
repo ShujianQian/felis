@@ -593,6 +593,7 @@ EpochMemory::EpochMemory()
     node_mem[i].mmap_buf =
         (uint8_t *) mem::AllocMemory(
             mem::Epoch, kEpochMemoryLimitPerCore * conf.g_nr_threads, -1, true);
+    logger->info("Epoch Mem for node {} is {}", i, (void *) node_mem[i].mmap_buf);
     for (int t = 0; t < conf.g_nr_threads; t++) {
       auto p = node_mem[i].mmap_buf + t * kEpochMemoryLimitPerCore;
       auto numa_node = t / mem::kNrCorePerNode;
