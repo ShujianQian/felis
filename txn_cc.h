@@ -158,6 +158,8 @@ struct InvokeHandle {
   RowFuncPtr rowfunc = nullptr;
   VHandle *row = nullptr;
 
+  InvokeHandle<TxnState, Types...> &operator=(const InvokeHandle<TxnState, Types...> &rhs) = default;
+
   void ClearCallback() {
     row = nullptr;
     rowfunc = nullptr;

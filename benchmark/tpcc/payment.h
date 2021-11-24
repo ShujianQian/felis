@@ -28,7 +28,7 @@ struct PaymentState {
 
   NodeBitmap nodes;
 
-  InvokeHandle<PaymentState, int> warehouse_future;
+  InvokeHandle<PaymentState, int, uint> warehouse_future;
   InvokeHandle<PaymentState, int> district_future;
   InvokeHandle<PaymentState, int> customer_future;
   struct Completion : public TxnStateCompletion<PaymentState> {
@@ -58,6 +58,13 @@ class PaymentTxn : public Txn<PaymentState>, public PaymentStruct {
   void Prepare() override final;
   void Run() override final;
   void PrepareInsert() override final {}
+
+  static void UpdateWarehouse(const State &state, const TxnHandle &index_handle,
+                              int payment_amount, int customer_warehouse_id);
+  static void UpdateDistrict(const State &state, const TxnHandle &index_handle,
+                             int payment_amount);
+  static void UpdateCustomer(const State &state, const TxnHandle &index_handle,
+                             int payment_amount);
 };
 
 }

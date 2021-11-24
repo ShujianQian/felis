@@ -105,6 +105,46 @@ void PaymentTxn::Prepare()
   }
 }
 
+void PaymentTxn::UpdateWarehouse(const State &state, const TxnHandle &index_handle,
+                                 int payment_amount, int customer_warehouse_id)
+{
+  TxnRow vhandle = index_handle(state->warehouse);
+  auto w = vhandle.Read<Warehouse::Value>();
+  w.w_ytd += payment_amount;
+  vhandle.Write(w);
+
+  // Notify this node when warehouse_tax has a value. If
+  // customer_node is the local node, then Signal() should simply
+  // flip the boolean flag without transfer value over the network.
+  int customer_node = TpccSliceRouter::SliceToNodeId(
+      g_tpcc_config.WarehouseToSliceId(customer_warehouse_id));
+  state->warehouse_tax_future.Subscribe(customer_node);
+
+  state->warehouse_tax_future.Signal(w.w_tax);
+}
+
+void PaymentTxn::UpdateDistrict(const State &state, const TxnHandle &index_handle, int payment_amount)
+{
+  TxnRow vhandle = index_handle(state->district);
+  auto d = vhandle.Read<District::Value>();
+  d.d_ytd += payment_amount;
+  vhandle.Write(d);
+}
+
+void PaymentTxn::UpdateCustomer(const State &state, const TxnHandle &index_handle, int payment_amount)
+{
+  TxnRow vhandle = index_handle(state->customer);
+  auto c = vhandle.Read<Customer::Value>();
+  // auto tax = state->warehouse_tax_future.Wait();
+  auto tax = 0;
+  auto amount = payment_amount + payment_amount * tax / 100;
+
+  c.c_balance -= amount;
+  c.c_ytd_payment += amount;
+  c.c_payment_cnt++;
+  vhandle.Write(c);
+}
+
 void PaymentTxn::Run()
 {
   auto &conf = util::Instance<NodeConfiguration>();
@@ -116,22 +156,15 @@ void PaymentTxn::Run()
       state->warehouse_future = UpdateForKey(
           node, state->warehouse,
           [](const auto &ctx, VHandle *row) {
-            auto &[state, index_handle, payment_amount] = ctx;
-            TxnRow vhandle = index_handle(state->warehouse);
-            auto w = vhandle.Read<Warehouse::Value>();
-            w.w_ytd += payment_amount;
-            vhandle.Write(w);
-            ClientBase::OnUpdateRow(state->warehouse);
-          }, payment_amount);
+            auto &[state, index_handle, payment_amount, customer_warehouse_id] = ctx;
+            UpdateWarehouse(state, index_handle, payment_amount, customer_warehouse_id);
+          }, payment_amount, customer_warehouse_id);
 
       state->district_future = UpdateForKey(
           node, state->district,
           [](const auto &ctx, VHandle *row) {
             auto &[state, index_handle, payment_amount] = ctx;
-            TxnRow vhandle = index_handle(state->district);
-            auto d = vhandle.Read<District::Value>();
-            d.d_ytd += payment_amount;
-            vhandle.Write(d);
+            UpdateDistrict(state, index_handle, payment_amount);
           }, payment_amount);
 
 
@@ -139,13 +172,7 @@ void PaymentTxn::Run()
           node, state->customer,
           [](const auto &ctx, VHandle *row) {
             auto &[state, index_handle, payment_amount] = ctx;
-            TxnRow vhandle = index_handle(state->customer);
-            auto c = vhandle.Read<Customer::Value>();
-            c.c_balance -= payment_amount;
-            c.c_ytd_payment += payment_amount;
-            c.c_payment_cnt++;
-            vhandle.Write(c);
-            ClientBase::OnUpdateRow(state->customer);
+            UpdateCustomer(state, index_handle, payment_amount);
           }, payment_amount);
 
       if (!state->warehouse_future.has_callback()
@@ -183,14 +210,14 @@ void PaymentTxn::Run()
         }
 
         root->AttachRoutine(
-            MakeContext(payment_amount, bitmap, filter), node,
+            MakeContext(payment_amount, customer_warehouse_id, bitmap, filter), node,
             [](const auto &ctx) {
-              auto &[state, index_handle, payment_amount, bitmap, filter] = ctx;
+              auto &[state, index_handle, payment_amount, customer_warehouse_id, bitmap, filter] = ctx;
 
               probes::TpccPayment{0, __builtin_popcount(bitmap), (int) state->warehouse->object_coreid()}();
 
               if ((bitmap & 0x01) && (filter & 0x01)) {
-                state->warehouse_future.Invoke(state, index_handle, payment_amount);
+                state->warehouse_future.Invoke(state, index_handle, payment_amount, customer_warehouse_id);
 
                 if (Client::g_enable_pwv) {
                   util::Instance<PWVGraphManager>().local_graph()->ActivateResource(
@@ -229,41 +256,15 @@ void PaymentTxn::Run()
             auto &[state, index_handle, bitmap, payment_amount, customer_warehouse_id] = ctx;
 
             if (bitmap & 0x01) {
-              TxnRow vhandle = index_handle(state->warehouse);
-              auto w = vhandle.Read<Warehouse::Value>();
-              w.w_ytd += payment_amount;
-              vhandle.Write(w);
-              // Notify this node when warehouse_tax has a value. If
-              // customer_node is the local node, then Signal() should simply
-              // flip the boolean flag without transfer value over the network.
-              int customer_node = TpccSliceRouter::SliceToNodeId(
-                  g_tpcc_config.WarehouseToSliceId(customer_warehouse_id));
-              state->warehouse_tax_future.Subscribe(customer_node);
-
-              state->warehouse_tax_future.Signal(w.w_tax);
-              ClientBase::OnUpdateRow(state->warehouse);
+              UpdateWarehouse(state, index_handle, payment_amount, customer_warehouse_id);
             }
 
             if (bitmap & 0x02) {
-              TxnRow vhandle = index_handle(state->district);
-              auto d = vhandle.Read<District::Value>();
-              d.d_ytd += payment_amount;
-              vhandle.Write(d);
-              ClientBase::OnUpdateRow(state->district);
+              UpdateDistrict(state, index_handle, payment_amount);
             }
 
             if (bitmap & 0x04) {
-              TxnRow vhandle = index_handle(state->customer);
-              auto c = vhandle.Read<Customer::Value>();
-              // auto tax = state->warehouse_tax_future.Wait();
-              auto tax = 0;
-              auto amount = payment_amount + payment_amount * tax / 100;
-
-              c.c_balance -= amount;
-              c.c_ytd_payment += amount;
-              c.c_payment_cnt++;
-              vhandle.Write(c);
-              ClientBase::OnUpdateRow(state->customer);
+              UpdateCustomer(state, index_handle, payment_amount);
             }
           });
     }
