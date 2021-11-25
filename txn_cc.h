@@ -124,7 +124,7 @@ class FutureValue final : public BaseFutureValue {
   }
 
   const FutureValue<T> &operator=(const FutureValue<T> &rhs) {
-    ready = rhs.ready.load();
+    BaseFutureValue::operator=(rhs);
     value = rhs.value;
     return *this;
   }

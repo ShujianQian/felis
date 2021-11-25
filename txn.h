@@ -191,8 +191,10 @@ class BaseFutureValue {
  public:
   BaseFutureValue() {}
   BaseFutureValue(const BaseFutureValue &rhs) : ready(rhs.ready.load()) {}
-  const BaseFutureValue &operator=(const BaseFutureValue &rhs) {
+  BaseFutureValue &operator=(const BaseFutureValue &rhs) {
     ready = rhs.ready.load();
+    nr_nodes = rhs.nr_nodes;
+    __builtin_memcpy(nodes, rhs.nodes, nr_nodes);
     return *this;
   }
   void Signal();
