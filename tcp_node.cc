@@ -8,6 +8,8 @@
 #include "gopp/channels.h"
 #include "epoch.h"
 #include "log.h"
+#include <iostream>
+#include "txn_cc.h"
 
 namespace felis {
 namespace tcp {
@@ -307,6 +309,7 @@ size_t ReceiverChannel::PollRoutines(PieceRoutine **routines, size_t cnt)
 
       transport->OnCounterReceived();
     } else if ((header & 0xFFFF000000000000) == ((uint64_t)2<<55) ){ //lets use the upper 2 bytes of the header as a flag
+      logger->info("receiving");
       header -= ((uint64_t)2<<55);
       auto buflen = 8 + header;
       auto buf = (uint8_t *) alloca(buflen);
@@ -320,13 +323,14 @@ size_t ReceiverChannel::PollRoutines(PieceRoutine **routines, size_t cnt)
       memcpy(&node_id, buf+16, sizeof(int));
       memcpy(&offset, buf+16+sizeof(int), sizeof(uint64_t));
       header -= 24+sizeof(int); //don't really need this line
-      
+      std::cout << "header\n";
       //I think I'm doing this bit wrong
       BaseFutureValue* localFuture = (BaseFutureValue *) util::Instance<EpochManager>().ptr(epoch_nr,node_id,offset);
-
-      localFuture->DecodeFrom(buf+24+sizeof(int));
+      std::cout << "got prt\n";
+      ((FutureValue<int32_t> *)localFuture)->DecodeFrom(buf+24+sizeof(int)); //TODO, don't assume type
       localFuture->setReady();
       in->Skip(buflen);
+      std::cout << "rcv done\n";
 
     } else {
       abort_if(header % 8 != 0, "header isn't aligned {}", header);
@@ -503,15 +507,17 @@ void TcpNodeTransport::TransportFutureValue(BaseFutureValue *val)
 
     auto out = outgoing_channels.at(node);
     //Fill in the correct buffer_size
-    size_t buffer_size = val->EncodeSize();
+    //std::cout << "sending\n";
+    size_t buffer_size = ((FutureValue<int32_t> *)val)->EncodeSize(); //TODO remove cast here as well
     buffer_size += 3 * sizeof(uint64_t); //header, epoch, offset
     buffer_size += sizeof(int); //node id
-    
+    //std::cout << "encoded\n";
     uint8_t *buffer = (uint8_t *) out->Alloc(buffer_size);
     // Fill in the data here in the buffer pointer. After that, make sure
     // you call the Finish() function.
     uint64_t header = buffer_size - 8 + ((uint64_t)2<<55); // 2^56 is our flag
 
+    //std::cout << "preconvert\n";
     //this bit might also be wrong
     GenericEpochObject<BaseFutureValue> epochInfo = val->ConvertToEpochObject();
 
@@ -519,9 +525,11 @@ void TcpNodeTransport::TransportFutureValue(BaseFutureValue *val)
     memcpy(buffer+8,&(epochInfo.epoch_nr),8);
     memcpy(buffer+16,&(epochInfo.node_id),sizeof(int));
     memcpy(buffer+16+sizeof(int),&(epochInfo.offset),8);
-    val->EncodeTo(buffer+24+sizeof(int));
+    //std::cout << "encodeTo\n";
+    ((FutureValue<int32_t> *)val)->EncodeTo(buffer+24+sizeof(int)); //TODO remove cast
 
     out->Finish(buffer_size);
+    logger->info("sent data");
   }
 }
 
