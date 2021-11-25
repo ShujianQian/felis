@@ -131,6 +131,7 @@ class FutureValue final : public BaseFutureValue {
 
   void Signal(T v) {
     value = v;
+    util::Impl<PromiseRoutineTransportService>().TransportFutureValue(this);
     BaseFutureValue::Signal();
   }
   T &Wait() {

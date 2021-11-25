@@ -120,7 +120,7 @@ void PaymentTxn::UpdateWarehouse(const State &state, const TxnHandle &index_hand
       g_tpcc_config.WarehouseToSliceId(customer_warehouse_id));
   state->warehouse_tax_future.Subscribe(customer_node);
 
-  state->warehouse_tax_future.Signal(w.w_tax);
+  //state->warehouse_tax_future.Signal(w.w_tax);
 }
 
 void PaymentTxn::UpdateDistrict(const State &state, const TxnHandle &index_handle, int payment_amount)
@@ -135,7 +135,7 @@ void PaymentTxn::UpdateCustomer(const State &state, const TxnHandle &index_handl
 {
   TxnRow vhandle = index_handle(state->customer);
   auto c = vhandle.Read<Customer::Value>();
-  // auto tax = state->warehouse_tax_future.Wait();
+  //auto tax = state->warehouse_tax_future.Wait();
   auto tax = 0;
   auto amount = payment_amount + payment_amount * tax / 100;
 

@@ -326,6 +326,7 @@ size_t ReceiverChannel::PollRoutines(PieceRoutine **routines, size_t cnt)
 
       localFuture->DecodeFrom(buf+24+sizeof(int));
       localFuture->setReady();
+      in->Skip(buflen);
 
     } else {
       abort_if(header % 8 != 0, "header isn't aligned {}", header);
