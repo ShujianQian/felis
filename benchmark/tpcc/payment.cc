@@ -247,7 +247,8 @@ void PaymentTxn::Run()
                 }
               }
             },
-            aff);
+            aff, (((bitmap & 0x04) && (filter & 0x04)) && !((bitmap & 0x01) && (filter & 0x01))) ? 1:0 );
+            //we'll need to add a count for ourselves if the wait stays here but the signal doesn't
       }
     } else {
       root->AttachRoutine(
@@ -266,7 +267,9 @@ void PaymentTxn::Run()
             if (bitmap & 0x04) {
               UpdateCustomer(state, index_handle, payment_amount);
             }
-          });
+          }, std::numeric_limits<uint64_t>::max(), ((bitmap & 0x04) && !(bitmap & 0x01)) ? 1:0);
+          //this part is bound for another node, set the flags for if we're sending a wait
+          //we'll add a count for the wait unless the signal is also going
     }
   }
 }

@@ -235,7 +235,8 @@ class ReceiverChannel : public IncomingTraffic {
 void ReceiverChannel::Complete(size_t n)
 {
   if (n == 0) return;
-  auto left = nr_left.fetch_sub(n) - n;
+  int64_t left = nr_left.fetch_sub(n) - n;
+  logger->info("left: {}",left);
   abort_if(left < 0, "left {} < 0!", left);
   if (left == 0) {
     logger->info("{} Complete() last n={}", (void *) this, n);
@@ -277,9 +278,10 @@ size_t ReceiverChannel::Poll(PieceRoutine **routines, size_t cnt)
 size_t ReceiverChannel::PollRoutines(PieceRoutine **routines, size_t cnt)
 {
   uint64_t header;
-  size_t i = 0;
-  while (i < cnt) {
-    if (in->Peek(&header, 8) < 8)
+  size_t i = 0; //counter for pieces processed
+  size_t futuresProcessed = 0; //count how many futures we processed
+  while (i < cnt) { //only process so long as piece buffer has space
+    if (in->Peek(&header, 8) < 8) //stop early if buffer empty
       break;
 
     if (((header >> 56) & 0xFF) == 0xFF) {
@@ -309,7 +311,7 @@ size_t ReceiverChannel::PollRoutines(PieceRoutine **routines, size_t cnt)
 
       transport->OnCounterReceived();
     } else if ((header & 0xFFFF000000000000) == ((uint64_t)2<<55) ){ //lets use the upper 2 bytes of the header as a flag
-      logger->info("receiving");
+      
       header -= ((uint64_t)2<<55);
       auto buflen = 8 + header;
       auto buf = (uint8_t *) alloca(buflen);
@@ -323,14 +325,15 @@ size_t ReceiverChannel::PollRoutines(PieceRoutine **routines, size_t cnt)
       memcpy(&node_id, buf+16, sizeof(int));
       memcpy(&offset, buf+16+sizeof(int), sizeof(uint64_t));
       header -= 24+sizeof(int); //don't really need this line
-      std::cout << "header\n";
-      //I think I'm doing this bit wrong
+
+      //get the pointer to the local future value object
       BaseFutureValue* localFuture = (BaseFutureValue *) util::Instance<EpochManager>().ptr(epoch_nr,node_id,offset);
-      std::cout << "got prt\n";
+
       ((FutureValue<int32_t> *)localFuture)->DecodeFrom(buf+24+sizeof(int)); //TODO, don't assume type
       localFuture->setReady();
       in->Skip(buflen);
-      std::cout << "rcv done\n";
+      logger->info("receiving: {}" ,go::Scheduler::CurrentThreadPoolId()-1);
+      futuresProcessed++;
 
     } else {
       abort_if(header % 8 != 0, "header isn't aligned {}", header);
@@ -342,7 +345,9 @@ size_t ReceiverChannel::PollRoutines(PieceRoutine **routines, size_t cnt)
       in->Skip(buflen);
     }
   }
-  Complete(i);
+  //counter for incoming futures is piggybacked alongside the counter for incoming pieces 
+  if(i+futuresProcessed > 0) logger->info("polled {} pieces and {} futures",i, futuresProcessed);
+  Complete(i+futuresProcessed); 
   return i;
 }
 
@@ -529,7 +534,7 @@ void TcpNodeTransport::TransportFutureValue(BaseFutureValue *val)
     ((FutureValue<int32_t> *)val)->EncodeTo(buffer+24+sizeof(int)); //TODO remove cast
 
     out->Finish(buffer_size);
-    logger->info("sent data");
+    logger->info("sent data: {}",go::Scheduler::CurrentThreadPoolId()-1);
   }
 }
 

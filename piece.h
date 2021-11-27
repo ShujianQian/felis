@@ -29,7 +29,9 @@ struct PieceRoutine {
   size_t DecodeNode(uint8_t *p, size_t len);
 
   BasePieceCollection *next;
-  uint8_t __padding__[16];
+
+  uint8_t fv_waits;
+  uint8_t __padding__[15];
 
   static PieceRoutine *CreateFromCapture(size_t capture_len);
   static PieceRoutine *CreateFromPacket(uint8_t *p, size_t packet_len);

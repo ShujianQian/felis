@@ -253,7 +253,7 @@ void BaseFutureValue::Signal()
 void BaseFutureValue::Wait()
 {
   long wait_cnt = 0;
-  if(!ready) logger->info("spin wait");
+  
   while (!ready) {
     wait_cnt++;
     if ((wait_cnt & 0x0FFFF) == 0) {
