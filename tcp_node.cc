@@ -120,8 +120,10 @@ void SendChannel::Finish(size_t sz)
 
 bool SendChannel::PushRelease(int tid, unsigned int start, unsigned int end)
 {
+  
   auto mem = channels[tid].mem;
   if (end - start > 0) {
+    logger->info("PushRelease {}", end-start);
     void *buf = alloca(end - start);
     memcpy(buf, mem + start, end - start);
     channels[tid].dirty.store(true, std::memory_order_release);
@@ -321,18 +323,17 @@ size_t ReceiverChannel::PollRoutines(PieceRoutine **routines, size_t cnt)
       uint64_t epoch_nr;
       int node_id;
       uint64_t offset;
-      memcpy(&epoch_nr, buf+8, sizeof(uint64_t));
-      memcpy(&node_id, buf+16, sizeof(int));
-      memcpy(&offset, buf+16+sizeof(int), sizeof(uint64_t));
-      header -= 24+sizeof(int); //don't really need this line
+      memcpy(&epoch_nr, buf+8, 8);
+      memcpy(&offset, buf+16, 8);
+      memcpy(&node_id, buf+24, 4);
 
       //get the pointer to the local future value object
       BaseFutureValue* localFuture = (BaseFutureValue *) util::Instance<EpochManager>().ptr(epoch_nr,node_id,offset);
 
-      ((FutureValue<int32_t> *)localFuture)->DecodeFrom(buf+24+sizeof(int)); //TODO, don't assume type
+      ((FutureValue<int32_t> *)localFuture)->DecodeFrom(buf+28); //TODO, don't assume type
       localFuture->setReady();
       in->Skip(buflen);
-      logger->info("receiving: {}" ,go::Scheduler::CurrentThreadPoolId()-1);
+      logger->info("receiving: {} offset: {}" ,go::Scheduler::CurrentThreadPoolId()-1, offset);
       futuresProcessed++;
 
     } else {
@@ -516,7 +517,9 @@ void TcpNodeTransport::TransportFutureValue(BaseFutureValue *val)
     size_t buffer_size = ((FutureValue<int32_t> *)val)->EncodeSize(); //TODO remove cast here as well
     buffer_size += 3 * sizeof(uint64_t); //header, epoch, offset
     buffer_size += sizeof(int); //node id
-    //std::cout << "encoded\n";
+    //the buffer is 28 bytes, plus the size of the encoded future value, which for now is always 4 bytes, for 32 total
+    //does the whole thing need to be padded to nearest 8?
+
     uint8_t *buffer = (uint8_t *) out->Alloc(buffer_size);
     // Fill in the data here in the buffer pointer. After that, make sure
     // you call the Finish() function.
@@ -528,13 +531,13 @@ void TcpNodeTransport::TransportFutureValue(BaseFutureValue *val)
 
     memcpy(buffer,&header,8);
     memcpy(buffer+8,&(epochInfo.epoch_nr),8);
-    memcpy(buffer+16,&(epochInfo.node_id),sizeof(int));
-    memcpy(buffer+16+sizeof(int),&(epochInfo.offset),8);
+    memcpy(buffer+16,&(epochInfo.offset),8);
+    memcpy(buffer+24,&(epochInfo.node_id),4);
     //std::cout << "encodeTo\n";
-    ((FutureValue<int32_t> *)val)->EncodeTo(buffer+24+sizeof(int)); //TODO remove cast
+    ((FutureValue<int32_t> *)val)->EncodeTo(buffer+28); //TODO remove cast
 
     out->Finish(buffer_size);
-    logger->info("sent data: {}",go::Scheduler::CurrentThreadPoolId()-1);
+    logger->info("sent data: {} offset: {}",go::Scheduler::CurrentThreadPoolId()-1,epochInfo.offset);
   }
 }
 
