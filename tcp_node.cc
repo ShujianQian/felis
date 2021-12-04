@@ -123,7 +123,7 @@ bool SendChannel::PushRelease(int tid, unsigned int start, unsigned int end)
   
   auto mem = channels[tid].mem;
   if (end - start > 0) {
-    logger->info("PushRelease {}", end-start);
+    //logger->info("PushRelease {}", end-start);
     void *buf = alloca(end - start);
     memcpy(buf, mem + start, end - start);
     channels[tid].dirty.store(true, std::memory_order_release);
@@ -238,7 +238,7 @@ void ReceiverChannel::Complete(size_t n)
 {
   if (n == 0) return;
   int64_t left = nr_left.fetch_sub(n) - n;
-  logger->info("left: {}",left);
+  //logger->info("left: {}",left);
   abort_if(left < 0, "left {} < 0!", left);
   if (left == 0) {
     logger->info("{} Complete() last n={}", (void *) this, n);
@@ -347,7 +347,7 @@ size_t ReceiverChannel::PollRoutines(PieceRoutine **routines, size_t cnt)
     }
   }
   //counter for incoming futures is piggybacked alongside the counter for incoming pieces 
-  if(i+futuresProcessed > 0) logger->info("polled {} pieces and {} futures",i, futuresProcessed);
+  //if(i+futuresProcessed > 0) logger->info("polled {} pieces and {} futures",i, futuresProcessed);
   Complete(i+futuresProcessed); 
   return i;
 }
@@ -579,6 +579,7 @@ bool TcpNodeTransport::PeriodicIO(int core)
     if (core == -1) {
       chn->Flush();
     } else {
+      //logger->info("periodic IO on core {}",core);
       auto [success, did_flush] = chn->TryFlushForThread(core + 1);
 
       // We need to flush no matter what.
