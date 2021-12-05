@@ -279,6 +279,8 @@ size_t ReceiverChannel::Poll(PieceRoutine **routines, size_t cnt)
 
 size_t ReceiverChannel::PollRoutines(PieceRoutine **routines, size_t cnt)
 {
+  auto &svc = util::Impl<PromiseRoutineDispatchService>();
+  int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
   uint64_t header;
   size_t i = 0; //counter for pieces processed
   size_t futuresProcessed = 0; //count how many futures we processed
@@ -333,8 +335,12 @@ size_t ReceiverChannel::PollRoutines(PieceRoutine **routines, size_t cnt)
       ((FutureValue<int32_t> *)localFuture)->DecodeFrom(buf+28); //TODO, don't assume type
       localFuture->setReady();
       in->Skip(buflen);
-      logger->info("receiving: {} offset: {}" ,go::Scheduler::CurrentThreadPoolId()-1, offset);
+      //logger->info("receiving: {} offset: {}" ,go::Scheduler::CurrentThreadPoolId()-1, offset);
       futuresProcessed++;
+
+      //by counting futures alongside pieces, we consider them both tasks
+      //because of this, we need to count every time we recieve a Future
+      svc.Complete(core_id);
 
     } else {
       abort_if(header % 8 != 0, "header isn't aligned {}", header);
@@ -537,7 +543,7 @@ void TcpNodeTransport::TransportFutureValue(BaseFutureValue *val)
     ((FutureValue<int32_t> *)val)->EncodeTo(buffer+28); //TODO remove cast
 
     out->Finish(buffer_size);
-    logger->info("sent data: {} offset: {}",go::Scheduler::CurrentThreadPoolId()-1,epochInfo.offset);
+    //logger->info("sent data: {} offset: {}",go::Scheduler::CurrentThreadPoolId()-1,epochInfo.offset);
   }
 }
 
@@ -557,7 +563,7 @@ void TcpNodeTransport::FinishCompletion(int level)
     auto idx = conf.BatchBufferIndex(level, src_node, dst_node);
     auto target_cnt = conf.TotalBatchCounter(idx).load();
     auto cnt = conf.batcher().Merge(level, meta, dst_node);
-    // printf("cnt %lu, target %lu\n", cnt, target_cnt);
+    //printf("cnt %lu, target %lu\n", cnt, target_cnt);
     auto chn = outgoing_channels.at(dst_node);
     if (cnt == target_cnt && cnt > 0) {
       // Flush channels to this route
