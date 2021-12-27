@@ -15,4 +15,4 @@
 	url = git@github.com:ShujianQian/masstree.git
 [submodule "gopp"]
 	path = gopp
-	url = git@fs.csl.utoronto.ca:gopp.git
+	url = git@github.com:ShujianQian/gopp.git
