@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.10)
 
 project(felis)
 
+set(CMAKE_CXX_STANDARD 17)
+
 #=======================================================================================================================
 #
 #=======================================================================================================================
@@ -36,7 +38,7 @@ add_executable(db
         gopp/start-x86_64.S
         )
 
-target_include_directories(db PUBLIC ./)
+target_include_directories(db PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/spdlog/include)
 
 #=======================================================================================================================
 # Doxygen Documentation
