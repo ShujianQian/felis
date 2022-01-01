@@ -1,0 +1,41 @@
+cmake_minimum_required(VERSION 3.10)
+
+project(felis)
+
+set(CMAKE_CXX_STANDARD 17)
+
+#=======================================================================================================================
+#
+#=======================================================================================================================
+
+#add_subdirectory(gopp)
+#add_subdirectory(json11)
+#add_subdirectory(masstree)
+#add_subdirectory(spdlog)
+
+add_executable(db
+        main.cc module.cc
+        epoch.cc routine_sched.cc txn.cc log.cc vhandle.cc vhandle_sync.cc contention_manager.cc locality_manager.cc
+        gc.cc index.cc mem.cc
+        piece.cc masstree_index_impl.cc hashtable_index_impl.cc
+        node_config.cc console.cc console_client.cc
+        commit_buffer.cc shipping.cc entity.cc iface.cc slice.cc tcp_node.cc
+        felis_probes.cc
+        xxHash/xxhash.c util/os_linux.cc util/locks.cc
+        pwv_graph.cc
+        benchmark/ycsb/ycsb.cc
+        benchmark/ycsb/ycsb_workload.cc
+        benchmark/ycsb/ycsb_priority.cc
+        benchmark/tpcc/tpcc.cc
+        benchmark/tpcc/tpcc_workload.cc
+        benchmark/tpcc/new_order.cc
+        benchmark/tpcc/payment.cc
+        benchmark/tpcc/delivery.cc
+        benchmark/tpcc/order_status.cc
+        benchmark/tpcc/stock_level.cc
+        gopp/gopp.cc
+        gopp/channels.cc
+        gopp/start-x86_64.S
+        )
+
+target_include_directories(db PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/spdlog/include)
