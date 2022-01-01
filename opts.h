@@ -148,6 +148,8 @@ struct Options {
 
   static inline const auto kPriorityBatchMode = Option("PriorityBatchMode");
 
+  static inline const auto kTxnQueueLength = Option("TxnQueueLength");
+
   /// \brief Parses an extended option and updates global options in Option.
   /// \param arg
   /// \return
