@@ -5,6 +5,7 @@
 [alias]
   db = //:db#debug
   db_release = //:db#release
+  db_traceall = //:db#traceall
   db_asan = //:db#asan
   test = //:dbtest#debug
 
@@ -26,3 +27,8 @@
   cxxflags = -Og -g -march=native -flto=thin -std=c++17 -stdlib=libc++ -DNDEBUG -fsanitize=address -fsanitize-recover=address
   cflags = -Og -g -march=native -flto=thin -DNDEBUG -fsanitize=address -fsanitize-recover=address
   ldflags = -fuse-ld=lld -Og -g -march=native -std=c++17 -flto=thin -Wl,-Bstatic -lc++ -lc++abi -Wl,-Bdynamic -nostdlib++ -fsanitize=address -fsanitize-recover=address
+
+[cxx#traceall]
+  cxxflags = -g -O0 -fstandalone-debug -std=c++17 -stdlib=libc++ -U_FORTIFY_SOURCE -DTRACE_ALL
+  cflags = -g -O0 -fstandalone-debug -U_FORTIFY_SOURCE -DTRACE_ALL
+  ldflags = -fuse-ld=lld -std=c++17 -g -O0 -fstandalone-debug -Wl,-Bstatic -lc++ -lc++abi -Wl,-Bdynamic -nostdlib++

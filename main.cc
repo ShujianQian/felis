@@ -37,6 +37,11 @@ int main(int argc, char *argv[])
   std::string workload_name;
   std::string node_name;
 
+#ifdef TRACE_ALL
+  printf("TRACE_ALL is set, dump all possible traces.");
+  exit(1);
+#endif
+
   while ((opt = getopt(argc, argv, "w:n:c:X:")) != -1) {
     switch (opt) {
       case 'w':
