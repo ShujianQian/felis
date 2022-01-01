@@ -1,4 +1,12 @@
-// -*- mode: c++ -*-
+////////////////////////////////////////////////////////////////////////////////
+/// \file felis_probe.h
+///
+/// \brief Define instrumentation for various statistics.
+/// \details Each struct defined represents a type of probe. \n
+/// Probes can be invoked by constructing a new instance with data and invoking
+/// the operator().
+////////////////////////////////////////////////////////////////////////////////
+
 #ifndef FELIS_PROBES_H
 #define FELIS_PROBES_H
 

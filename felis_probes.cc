@@ -1,3 +1,11 @@
+////////////////////////////////////////////////////////////////////////////////
+/// \file felis_probes.cc
+///
+/// \brief Definition of various probing utilities.
+/// \details To define the operation of a probe, specialize and override the
+/// \ref OnProbe function that takes a probe callable as argument.
+////////////////////////////////////////////////////////////////////////////////
+
 #include <cstdlib>
 #include <iostream>
 #include <fstream>
