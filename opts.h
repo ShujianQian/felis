@@ -132,6 +132,8 @@ struct Options {
 
   static inline const auto kPriorityBatchMode = Option("PriorityBatchMode");
 
+  static inline const auto kTxnQueueLength = Option("TxnQueueLength");
+
   static inline bool ParseExtentedOptions(std::string arg)
   {
     for (auto o: Option::g_options) {
