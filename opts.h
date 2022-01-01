@@ -1,3 +1,9 @@
+////////////////////////////////////////////////////////////////////////////////
+/// \file opts.h
+///
+/// \brief Utility for parsing extended options.
+////////////////////////////////////////////////////////////////////////////////
+
 #ifndef _OPTS_H
 #define _OPTS_H
 
@@ -19,6 +25,13 @@ static inline long long ParseLargeNumber(std::string s)
   return l;
 }
 
+///
+/// \brief Globally available options.
+/// \details To register an option, construct an Option instance. \n
+///     \ref g_options   contain names of all registered options \n
+///     \ref g_suffices  contains values of parsed registered options \n
+///     \ref g_present   contains whether an options is present (and parsed) \n
+///
 struct Option {
   static inline std::vector<Option *> g_options;
   static inline std::vector<std::string> g_suffices;
@@ -48,6 +61,9 @@ struct Option {
   }
 };
 
+///
+/// \brief All available extended options registered here.
+///
 struct Options {
 
   // Long live the JVM style command line arguments!
@@ -132,6 +148,9 @@ struct Options {
 
   static inline const auto kPriorityBatchMode = Option("PriorityBatchMode");
 
+  /// \brief Parses an extended option and updates global options in Option.
+  /// \param arg
+  /// \return
   static inline bool ParseExtentedOptions(std::string arg)
   {
     for (auto o: Option::g_options) {
