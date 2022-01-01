@@ -1,3 +1,9 @@
+////////////////////////////////////////////////////////////////////////////////
+/// \file piece.h
+///
+/// \brief
+////////////////////////////////////////////////////////////////////////////////
+
 #ifndef PIECE_H
 #define PIECE_H
 
@@ -14,15 +20,22 @@ class PieceRoutine;
 
 // Performance: It seems critical to keep this struct one cache line!
 struct PieceRoutine {
+  // -----  0 B -----
   uint8_t *capture_data;
+  // -----  8 B -----
   uint32_t capture_len;
   uint8_t level;
   uint8_t node_id;
   bool is_priority; // is it a piece from priority transaction
+  // ----- 15 B -----
+  //  1B padding
   uint64_t sched_key; // Optional. 0 for unset. For scheduling only.
   uint64_t affinity; // Which core to run on. -1 means not specified. >= nr_threads means random.
+  // ----- 32 B -----
 
   void (*callback)(PieceRoutine *);
+
+  // ----- 40 B -----
 
   size_t NodeSize() const;
   uint8_t *EncodeNode(uint8_t *p);
@@ -31,6 +44,8 @@ struct PieceRoutine {
 
   BasePieceCollection *next;
   uint8_t __padding__[16];
+
+  // ----- 64 B -----
 
   static PieceRoutine *CreateFromCapture(size_t capture_len);
   static PieceRoutine *CreateFromPacket(uint8_t *p, size_t packet_len);
