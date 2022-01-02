@@ -1,3 +1,9 @@
+////////////////////////////////////////////////////////////////////////////////
+/// \file module.h
+///
+/// \brief Interface to dynamically initialize modules.
+////////////////////////////////////////////////////////////////////////////////
+
 #ifndef MODULE_H
 #define MODULE_H
 
@@ -12,6 +18,16 @@ enum ModuleType {
   ExportModule,
 };
 
+/// \brief Interface to load a module
+///
+/// \tparam Type ModuleType
+///
+/// To add a module, inherit the Module class and define a static instance which
+/// will be constructed before the program starts and the module will be added
+/// to the list during construction.
+///
+/// The initialization of the module shall be performed in Module::Init() that
+/// overrides the pure virtual member.
 template <int Type>
 class Module {
   static Module<Type> *&head() {
