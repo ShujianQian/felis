@@ -219,6 +219,7 @@ class CoroutineModule : public Module<CoreModule> {
     static CoroutineStackAllocator alloc;
     go::InitThreadPool(NodeConfiguration::g_nr_threads + 1, &alloc);
 
+    // pin each worker thread to one unique CPU
     for (int i = 1; i <= NodeConfiguration::g_nr_threads; i++) {
       // We need to change core affinity by kCoreShifting
       auto r = go::Make(
@@ -230,6 +231,7 @@ class CoroutineModule : public Module<CoreModule> {
       go::GetSchedulerFromPool(i)->WakeUp(r);
     }
 
+    // allow the background thread to run on any of the CPUs
     auto r = go::Make(
         []() {
           util::Cpu info;
