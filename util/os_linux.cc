@@ -1,3 +1,13 @@
+////////////////////////////////////////////////////////////////////////////////
+/// \file os_linux.cc
+///
+/// \brief Definition of OS specific utilities for Linux.
+///
+/// The CPU utility allows pinning current thread to CPU.
+///
+/// The memory utility allocates, frees, locks and binds memory.
+////////////////////////////////////////////////////////////////////////////////
+
 #include <unistd.h>
 #include <pthread.h>
 #include <sched.h>
