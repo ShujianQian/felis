@@ -46,6 +46,8 @@ class EpochClientBaseWorker : public go::Routine {
   }
   void Reset() {
     bool old = true;
+    // spin until finish is set to true
+    // and set finish to false
     while (!finished.compare_exchange_strong(old, false)) {
       old = true;
       _mm_pause();
@@ -193,6 +195,7 @@ class EpochClient {
   EpochCallback callback;
   CompletionObject<EpochCallback &> completion;
 
+  //! Holds all the transactions. Initialized in GenerateBenchmarks.
   EpochTxnSet *all_txns;
   std::atomic<EpochTxnSet *> cur_txns;
   unsigned long total_nr_txn;
@@ -219,6 +222,9 @@ class EpochManager {
   uint64_t current_epoch_nr() const { return cur_epoch_nr; }
   Epoch *current_epoch() const { return epoch(cur_epoch_nr); }
 
+  /// \breif Advance a new epoch.
+  ///
+  /// \param client The EpochClient.
   void DoAdvance(EpochClient *client);
 };
 
@@ -329,6 +335,8 @@ class EpochPromiseAllocationService : public PromiseAllocationService {
   mem::Brk *minibrks[NodeConfiguration::kMaxNrThreads + 1]; // for mini objects
  public:
   void *Alloc(size_t size) final override;
+  ///
+  /// \brief Reset all brks and re-allocate minibrks.
   void Reset() final override;
 };
 

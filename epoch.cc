@@ -38,6 +38,7 @@ void EpochCallback::operator()(unsigned long cnt)
   trace(TRACE_COMPLETION "callback cnt {} on core {}",
         cnt, go::Scheduler::CurrentThreadPoolId() - 1);
 
+  // when all pieces are finished, call the corresponding OnComplete
   if (cnt == 0) {
     perf.End();
     perf.Show(label);
@@ -230,6 +231,8 @@ void AllocStateTxnWorker::Run()
   }
   for (auto i = 0; i < client->cur_txns.load()->per_core_txns[t]->nr; i++) {
     auto txn = client->cur_txns.load()->per_core_txns[t]->txns[i];
+    // for each transaction allocate the transaction state
+    // using AllocateEpochObjectOnCurrentNode
     txn->PrepareState();
   }
   if (comp.fetch_sub(1) == 2) {
@@ -237,6 +240,7 @@ void AllocStateTxnWorker::Run()
     // client->insert_lmgr.PrintLoads();
     comp.fetch_sub(1);
   }
+  // reset the commit buffer
   client->commit_buffer->Clear(t);
 }
 
@@ -250,8 +254,10 @@ void CallTxnsWorker::Run()
   set_urgent(true);
   auto pq = client->cur_txns.load()->per_core_txns[t];
 
+  // spin until AllocStateTxnWorker finishes on all threads
   while (AllocStateTxnWorker::comp.load() != 0) _mm_pause();
 
+  // invoke the required function for each of the txns
   for (auto i = 0; i < pq->nr; i++) {
     auto txn = pq->txns[i];
     txn->ResetRoot();
@@ -321,7 +327,15 @@ void CallTxnsWorker::Run()
 
   trace(TRACE_COMPLETION "complete issueing and flushing network {}", node_finished);
 
-  client->completion.Complete();
+  // this will invoke EpochCallback::PreComplete and EpochCallback::operator()
+  // EpochCallback::operator() will one of:
+  //   &EpochClient::OnInsertComplete,
+  //   &EpochClient::OnInitializeComplete,
+  //   &EpochClient::OnExecuteComplete,
+  // based on the current phase when completion::comp_count reaches 0
+      client->completion.Complete();
+  // acts as a barrier
+  // not completing until all threads finish FlushBufferPlan
   if (node_finished) {
     client->completion.Complete();
   }
@@ -330,9 +344,12 @@ void CallTxnsWorker::Run()
 void EpochClient::CallTxns(uint64_t epoch_nr, TxnMemberFunc func, const char *label)
 {
   auto nr_threads = NodeConfiguration::g_nr_threads;
+  // resets counters
   conf.ResetBufferPlan();
+  // TODO: [DOC] not sure what this does
   conf.SendStartPhase();
   callback.label = label;
+  // clear and starts performance tracker
   callback.perf.Clear();
   callback.perf.Start();
 
@@ -349,8 +366,10 @@ void EpochClient::CallTxns(uint64_t epoch_nr, TxnMemberFunc func, const char *la
   // The order here is very very important. First, we reset all issue
   // workers. After this step, the scheduler's IsReady() would return false.
   for (auto t = 0; t < nr_threads; t++) {
+    // resets the call_worker Routines
     auto r = &workers[t]->call_worker;
     r->Reset();
+    // sets the function to call on txns
     r->set_function(func);
   }
 
@@ -373,9 +392,11 @@ void EpochClient::CallTxns(uint64_t epoch_nr, TxnMemberFunc func, const char *la
 void EpochClient::InitializeEpoch()
 {
   auto &mgr = util::Instance<EpochManager>();
+  // advance to the next epoch
   mgr.DoAdvance(this);
   auto epoch_nr = mgr.current_epoch_nr();
 
+  // reset brks used for promise allocation
   util::Impl<PromiseAllocationService>().Reset();
 
   auto nr_threads = NodeConfiguration::g_nr_threads;
@@ -390,6 +411,7 @@ void EpochClient::InitializeEpoch()
   util::Instance<GC>().PrepareGCForAllCores();
 
   commit_buffer->Reset();
+  // for each thread, allocate required state and prepare
   AllocStateTxnWorker::comp = nr_threads + 1;
   for (auto t = 0; t < nr_threads; t++) {
     auto r = &workers[t]->alloc_state_worker;
@@ -669,6 +691,7 @@ static Epoch *g_epoch; // We don't support concurrent epochs for now.
 void EpochManager::DoAdvance(EpochClient *client)
 {
   cur_epoch_nr.fetch_add(1);
+  // construct a new Epoch
   cur_epoch.load()->~Epoch();
   cur_epoch = new (cur_epoch) Epoch(cur_epoch_nr, client, mem);
   logger->info("We are going into epoch {}", cur_epoch_nr);
