@@ -136,6 +136,8 @@ class NodeConfiguration {
     return all_config[idx].value();
   }
 
+  ///
+  /// \brief Reset buffer plan counters.
   void ResetBufferPlan();
   void CollectBufferPlan(BasePieceCollection *root, unsigned long *cnts);
   bool FlushBufferPlan(unsigned long *per_core_cnts);
