@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// \file piece.h
 ///
-/// \brief
+/// \brief TODO
 ////////////////////////////////////////////////////////////////////////////////
 
 #ifndef PIECE_H
@@ -18,7 +18,9 @@ namespace felis {
 class BasePieceCollection;
 class PieceRoutine;
 
-// Performance: It seems critical to keep this struct one cache line!
+///\brief TODO
+///
+/// Performance: It seems critical to keep this struct one cache line!
 struct PieceRoutine {
   // -----  0 B -----
   uint8_t *capture_data;
