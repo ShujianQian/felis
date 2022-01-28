@@ -9,6 +9,9 @@
 namespace felis
 {
 
+mem::ParallelSlabPool DoublyLinkedListExtraVHandle::pool;
+mem::ParallelSlabPool DoublyLinkedListExtraVHandle::Entry::pool;
+
 DoublyLinkedListExtraVHandle::DoublyLinkedListExtraVHandle()
         : head(nullptr), tail(nullptr), size(0)
 {
