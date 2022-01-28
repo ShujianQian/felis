@@ -56,7 +56,7 @@ add_executable(db
         gopp/gopp.cc
         gopp/channels.cc
         gopp/start-x86_64.S
-        )
+        extravhandle.cc extravhandle.h)
 
 target_include_directories(db PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(db PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/spdlog/include)

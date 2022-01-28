@@ -33,6 +33,7 @@ enum MemAllocType {
   RegionPool,
   Coroutine,
   NumMemTypes,
+  ExtraVhandlePool,
 };
 
 const std::string kMemAllocTypeLabel[] = {
