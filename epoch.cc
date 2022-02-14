@@ -200,7 +200,11 @@ void EpochClient::GenerateBenchmarks()
       if (NodeConfiguration::g_priority_txn) {
         seq = j + (j-1)/batched * priority;
       }
-      all_txns[i - 1].per_core_txns[t]->txns[pos] = CreateTxn(GenerateSerialId(i, seq));
+      uint64_t sid = GenerateSerialId(i, seq);
+      if(j == NumberOfTxns()){
+        logger->info("MaxBatchSID Epoch {} SID {}", i, sid);
+      }
+      all_txns[i - 1].per_core_txns[t]->txns[pos] = CreateTxn(sid);
     }
   }
 }
@@ -218,9 +222,10 @@ void EpochClient::Start()
 
 uint64_t EpochClient::GenerateSerialId(uint64_t epoch_nr, uint64_t sequence)
 {
-  return (epoch_nr << 32)
+  uint64_t sid = (epoch_nr << 32)
       | (sequence << 8)
       | (conf.node_id() & 0x00FF);
+  return sid;
 }
 
 void AllocStateTxnWorker::Run()
@@ -665,13 +670,44 @@ uint8_t *EpochManager::ptr(uint64_t epoch_nr, int node_id, uint64_t offset) cons
 }
 
 static Epoch *g_epoch; // We don't support concurrent epochs for now.
+void GlobalMaxSIDFromLastEpoch::set_max_sid_from_last_epoch_per_core(uint64_t sid, int core_id)
+{
+  if(sid > max_sid_from_last_epoch_per_core[core_id]){
+    max_sid_from_last_epoch_per_core[core_id] = sid;
+  }
+}
+
+void GlobalMaxSIDFromLastEpoch::accummulate_max_sid_from_last_epoch()
+{
+  for(int i = 0 ; i < NodeConfiguration::g_nr_threads; i ++){
+    if(max_sid_from_last_epoch_per_core[i] > max_sid_from_last_epoch){
+      max_sid_from_last_epoch = max_sid_from_last_epoch_per_core[i];
+    }
+  }
+}
+
+uint64_t GlobalMaxSIDFromLastEpoch::get_max_sid_from_last_epoch()
+{
+  return max_sid_from_last_epoch;
+}
 
 void EpochManager::DoAdvance(EpochClient *client)
 {
+  if(current_epoch_nr() != 0){
+    for(int i = 0 ; i < NodeConfiguration::g_nr_threads; i++){
+      auto pq = client->cur_txns.load()->per_core_txns[i];
+      if(pq->nr > 0){
+        g_max_sid.set_max_sid_from_last_epoch_per_core(pq->txns[pq->nr - 1]->serial_id(), i);
+      }
+    }
+    g_max_sid.accummulate_max_sid_from_last_epoch();
+  }
+
   cur_epoch_nr.fetch_add(1);
   cur_epoch.load()->~Epoch();
   cur_epoch = new (cur_epoch) Epoch(cur_epoch_nr, client, mem);
   logger->info("We are going into epoch {}", cur_epoch_nr);
+  logger->info("MAX sid from last! {}\n", g_max_sid.get_max_sid_from_last_epoch());
 }
 
 EpochManager::EpochManager(EpochMemory *mem, Epoch *epoch)

@@ -639,6 +639,9 @@ bool PriorityTxn::Init(VHandle **update_handles, int usize, BaseInsertKey **inse
     handle->AppendNewPriorityVersion(sid);
     // batched version array will have 0 version, priority version linked list will have 1 version
   }
+  int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+  // logger->info("Priority Init Epoch {} Max SID: {}", util::Instance<EpochManager>().current_epoch_nr(), sid);
+  util::Instance<EpochManager>().g_max_sid.set_max_sid_from_last_epoch_per_core(sid, core_id);
   this->initialized = true;
   return true;
 }

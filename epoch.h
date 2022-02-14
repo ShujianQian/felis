@@ -119,7 +119,7 @@ class EpochClient {
   friend class AllocStateTxnWorker;
   friend class EpochExecutionDispatchService;
   friend class ContentionManager;
-
+  friend class EpochManager;
   int core_limit;
   int best_core;
   int best_duration;
@@ -151,7 +151,6 @@ class EpochClient {
   void GenerateBenchmarks();
   void Start();
   const PerfLog& GetPerf() { return perf; }
-
   auto completion_object() { return &completion; }
   EpochWorkers *get_worker(int core_id) { return workers[core_id]; }
   LocalityManager &get_contention_locality_manager() { return cont_lmgr; }
@@ -204,6 +203,15 @@ class EpochClient {
 
 class EpochMemory;
 class Epoch;
+class GlobalMaxSIDFromLastEpoch{
+  uint64_t max_sid_from_last_epoch;
+  uint64_t max_sid_from_last_epoch_per_core[NodeConfiguration::kMaxNrThreads];
+public:
+  void set_max_sid_from_last_epoch_per_core(uint64_t sid, int core_id);
+  void accummulate_max_sid_from_last_epoch();
+
+  uint64_t get_max_sid_from_last_epoch();
+};
 
 class EpochManager {
   template <typename T> friend struct util::InstanceInit;
@@ -215,6 +223,7 @@ class EpochManager {
  public:
   Epoch *epoch(uint64_t epoch_nr) const;
   uint8_t *ptr(uint64_t epoch_nr, int node_id, uint64_t offset) const;
+  GlobalMaxSIDFromLastEpoch g_max_sid;
 
   uint64_t current_epoch_nr() const { return cur_epoch_nr; }
   Epoch *current_epoch() const { return epoch(cur_epoch_nr); }
