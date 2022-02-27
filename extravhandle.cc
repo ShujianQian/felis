@@ -451,10 +451,12 @@ void DoublyLinkedListExtraVHandle::GarbageCollect()
             ignores_to_collect.clear();
             num_to_collect = 1; // including the new_head that is collected in
             // the next iteration
+            cur = cur->next;
         } else {
             // keep trying to find the first version to keep
             ignores_to_collect.push_front(cur);
             num_to_collect++;
+            abort_if(cur == cur->next, "Fuck: loop in linked list");
             cur = cur->next;
         }
     }
