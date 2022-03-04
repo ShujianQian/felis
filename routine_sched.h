@@ -39,12 +39,6 @@ class PrioritySchedulingPolicy {
 
   bool empty() { return len == 0; }
 
-  // Before we try to schedule from this scheduling policy, should we double
-  // check the zero queue?
-  virtual bool ShouldRetryBeforePick(std::atomic_ulong *zq_start, std::atomic_ulong *zq_end,
-                                     std::atomic_uint *pq_start, std::atomic_uint *pq_end) {
-    return false;
-  }
   // Would you pick this key according to the current situation?
   virtual bool ShouldPickWaiting(const WaitState &ws) = 0;
   // Pick a value without consuming it.
@@ -94,11 +88,11 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
     mem::Brk brk; // memory allocator for hashtables entries and queue values
   };
 
-  struct ZeroQueue {
-    PieceRoutine **q;
-    std::atomic_ulong end;
-    std::atomic_ulong start;
-  };
+  // struct ZeroQueue {
+  //   PieceRoutine **q;
+  //   std::atomic_ulong end;
+  //   std::atomic_ulong start;
+  // };
 
   // q for priority txns
   struct TxnQueue {
@@ -123,7 +117,7 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
 
   struct Queue {
     PriorityQueue pq;
-    ZeroQueue zq;
+    // ZeroQueue zq;
     TxnQueue tq;
     util::SpinLock lock;
     State state;

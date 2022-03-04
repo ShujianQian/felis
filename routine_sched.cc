@@ -96,8 +96,6 @@ class PWVScheduler final : public PrioritySchedulingPolicy {
     bool in_rvp_queue;
   };
 
-  bool ShouldRetryBeforePick(std::atomic_ulong *zq_start, std::atomic_ulong *zq_end,
-                             std::atomic_uint *pq_start, std::atomic_uint *pq_end) override;
   bool ShouldPickWaiting(const WaitState &ws) override;
   PriorityQueueValue *Pick() override;
   void Consume(PriorityQueueValue *value) override;
@@ -214,20 +212,6 @@ void PWVScheduler::IngestPending(PriorityQueueHashEntry *hent, PriorityQueueValu
   qlock.Release(&qnode);
 }
 
-bool PWVScheduler::ShouldRetryBeforePick(std::atomic_ulong *zq_start, std::atomic_ulong *zq_end,
-                                         std::atomic_uint *pq_start, std::atomic_uint *pq_end)
-{
-  while (CallTxnsWorker::g_finished < NodeConfiguration::g_nr_threads) {
-    if (zq_start->load(std::memory_order_acquire) < zq_end->load(std::memory_order_acquire))
-      return true;
-    if (pq_start->load(std::memory_order_acquire) < pq_end->load(std::memory_order_acquire))
-      return true;
-  }
-
-  return zq_start->load(std::memory_order_acquire) < zq_end->load(std::memory_order_acquire)
-      || pq_start->load(std::memory_order_acquire) < pq_end->load(std::memory_order_acquire);
-}
-
 bool PWVScheduler::ShouldPickWaiting(const WaitState &ws)
 {
   // util::MCSSpinLock::QNode qnode;
@@ -336,13 +320,8 @@ EpochExecutionDispatchService::EpochExecutionDispatchService()
     }
     queue = qmem + offset_in_node;
 
-    queue->zq.end = queue->zq.start = 0;
-    queue->zq.q = (PieceRoutine **)
-                 mem::AllocMemory(
-                     mem::EpochQueuePromise,
-                     max_item_percore * sizeof(PieceRoutine *),
-                     numa_node);
     if (EpochClient::g_enable_pwv) {
+      assert(false);
       queue->pq.sched_pol = PWVScheduler::New(max_item_percore, numa_node);
     } else {
       queue->pq.sched_pol = ConservativePriorityScheduler::New(max_item_percore, numa_node);
@@ -392,8 +371,6 @@ void EpochExecutionDispatchService::Reset()
   for (int i = 0; i < NodeConfiguration::g_nr_threads; i++) {
     auto &q = queues[i];
     while (q->state.running == State::kDeciding) _mm_pause();
-    q->zq.end.store(0);
-    q->zq.start.store(0);
 
     q->state.ts = 0;
     q->state.current_sched_key = 0;
@@ -411,17 +388,12 @@ void EpochExecutionDispatchService::Add(int core_id, PieceRoutine **routines,
   auto &lock = queues[core_id]->lock;
   lock.Lock();
 
-  auto &zq = queues[core_id]->zq;
   auto &pq = queues[core_id]->pq.pending;
   size_t i = 0;
 
   auto max_item_percore = g_max_item / NodeConfiguration::g_nr_threads;
 
 again:
-  size_t zdelta = 0,
-           zend = zq.end.load(std::memory_order_acquire),
-         zlimit = max_item_percore;
-
   size_t pdelta = 0,
            pend = pq.end.load(std::memory_order_acquire),
          plimit = max_item_percore
@@ -430,20 +402,10 @@ again:
   for (; i < nr_routines; i++) {
     auto r = routines[i];
     auto key = r->sched_key;
-
-    if (key == 0) {
-      auto pos = zend + zdelta++;
-      abort_if(pos >= zlimit,
-               "Preallocation of DispatchService is too small. {} < {}", pos, zlimit);
-      zq.q[pos] = r;
-    } else {
-      if (pdelta >= plimit) goto again;
-      auto pos = pend + pdelta++;
-      pq.q[pos % max_item_percore] = r;
-    }
+    if (pdelta >= plimit) goto again;
+    auto pos = pend + pdelta++;
+    pq.q[pos % max_item_percore] = r;
   }
-  if (zdelta)
-    zq.end.fetch_add(zdelta, std::memory_order_release);
   if (pdelta)
     pq.end.fetch_add(pdelta, std::memory_order_release);
   lock.Unlock();
@@ -562,33 +524,15 @@ void EpochExecutionDispatchService::ProcessBatchCounter(int core_id)
 bool
 EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_pop)
 {
-  auto &zq = queues[core_id]->zq;
   auto &q = queues[core_id]->pq;
   auto &lock = queues[core_id]->lock;
   auto &state = queues[core_id]->state;
-  uint64_t zstart = 0;
 
   state.running = State::kDeciding;
-
   if (!IsReady(core_id)) {
     state.running = State::kSleeping;
     return false;
   }
-
-retry:
-  zstart = zq.start.load(std::memory_order_acquire);
-  if (zstart < zq.end.load(std::memory_order_acquire)) {
-    state.running = State::kRunning;
-    auto r = zq.q[zstart];
-    if (should_pop(r, nullptr)) {
-      zq.start.store(zstart + 1, std::memory_order_relaxed);
-      state.current_sched_key = r->sched_key;
-      return true;
-    }
-    return false;
-  }
-  // ZeroQueue has no piece to run
-
 
   // Setting state.running without poking around the data structure is very
   // important for performance. This let other thread create the co-routines
@@ -602,9 +546,7 @@ retry:
   }
 
   ProcessPending(q);
-  if (q.sched_pol->ShouldRetryBeforePick(&zq.start, &zq.end, &q.pending.start, &q.pending.end))
-    goto retry;
-    // Caracal ConservativePriorityScheduler does not retry
+
 
   // check whether to run the waiting coroutine
   if (q.waiting.len > 0
@@ -636,12 +578,6 @@ retry:
     }
     return false;
   }
-  /*
-  logger->info("pending start {} end {}, zstart {} zend {}, running {}, completed {}",
-               q.pending.start.load(), q.pending.end.load(),
-               zq.start.load(), zq.end.load(),
-               state.running.load(), state.complete_counter.completed);
-  */
 
   // We do not need locks to protect completion counters. There can only be MT
   // access on Pop() and Add(), the counters are per-core anyway.
@@ -734,7 +670,6 @@ bool EpochExecutionDispatchService::Preempt(int core_id, BasePieceCollection::Ex
 {
   auto &lock = queues[core_id]->lock;
   bool can_preempt = true;
-  auto &zq = queues[core_id]->zq;
   auto &q = queues[core_id]->pq;
   auto &state = queues[core_id]->state;
 
