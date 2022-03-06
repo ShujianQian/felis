@@ -529,7 +529,7 @@ EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_po
   auto &state = queues[core_id]->state;
 
   state.running = State::kDeciding;
-  if (!IsReady(core_id)) {
+  if (util::Instance<EpochManager>().current_phase() == EpochPhase::Execute && !IsReady(core_id)) {
     state.running = State::kSleeping;
     return false;
   }
@@ -590,6 +590,8 @@ EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_po
   while (!tot_bubbles.compare_exchange_strong(nr_bubbles, 0));
 
   if (n + nr_bubbles > 0) {
+    // logger->info("DispatchService on core {} notifies {}+{} completions",
+    //       core_id, n, nr_bubbles);
     trace(TRACE_COMPLETION "DispatchService on core {} notifies {}+{} completions",
           core_id, n, nr_bubbles);
     comp->Complete(n + nr_bubbles);
@@ -607,7 +609,7 @@ bool EpochExecutionDispatchService::Peek(int core_id, PriorityTxn *&txn, bool dr
   // hacks: for the time being we don't have occ yet, so only run priority txns
   //        during execution phase's pieces execution.
   // hack 1: if still during issuing, don't run
-  if (!IsReady(core_id)) {
+  if (util::Instance<EpochManager>().current_phase() == EpochPhase::Execute && !IsReady(core_id)) {
     return false;
   }
 

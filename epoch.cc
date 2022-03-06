@@ -240,8 +240,164 @@ void AllocStateTxnWorker::Run()
   client->commit_buffer->Clear(t);
 }
 
-void CallTxnsWorker::Run()
+void CallTxnsWorker::initialization_phase_run()
 {
+  auto nr_nodes = client->conf.nr_nodes();
+  auto batch_cnt = client->per_core_cnts[t];
+  auto batch_cnt_len = nr_nodes * nr_nodes * PromiseRoutineTransportService::kPromiseMaxLevels;
+  std::fill(batch_cnt, batch_cnt + batch_cnt_len, 0);
+
+  set_urgent(true);
+  auto batch_txn_set = client->cur_txns.load()->per_core_txns[t];
+
+  while (AllocStateTxnWorker::comp.load() != 0) _mm_pause();
+  
+  /* Code From ExecutionRoutine */
+  auto &svc = util::Impl<PromiseRoutineDispatchService>();
+  auto &transport = util::Impl<PromiseRoutineTransportService>();
+
+  int core_id = scheduler()->thread_pool_id() - 1;
+  trace(TRACE_EXEC_ROUTINE "new ExecutionRoutine up and running on {}", core_id);
+
+  PieceRoutine *next_r;
+  go::Scheduler *sched = scheduler();
+
+  auto should_pop_pri = PromiseRoutineDispatchService::GenericDispatchPeekListener(
+      [&next_r, sched]
+      (PieceRoutine *r, BasePieceCollection::ExecutionRoutine *state) -> bool {
+        if (state != nullptr) {
+          if (state->is_detached()) {
+            trace(TRACE_EXEC_ROUTINE "Wakeup Coroutine {}", (void *) state);
+            state->Init();
+            sched->WakeUp(state);
+          } else {
+            trace(TRACE_EXEC_ROUTINE "Found a sleeping Coroutine, but it's already awaken.");
+          }
+          return false;
+        }
+        if (!r->is_priority) // is not a piece from priority txn
+          return false;
+        next_r = r;
+        return true;
+      });
+
+  unsigned long cnt = 0x01F;
+  PriorityTxn *txn;
+  BaseTxn* batch_txn;
+  int batch_txn_cnt = 0;
+
+  bool done = false;
+  do {
+    if (svc.Peek(core_id, should_pop_pri)) {
+      auto rt = next_r;
+
+      util::Instance<PriorityTxnService>().UpdateProgress(core_id, rt->sched_key);
+      rt->callback(rt);
+      svc.Complete(core_id, PromiseRoutineDispatchService::CompleteType::PriorityPiece);
+      continue;
+    }
+
+    if (svc.Peek(core_id, txn)) {
+      txn->Run();
+      svc.Complete(core_id, PromiseRoutineDispatchService::CompleteType::PriorityInit);
+      continue;
+    }
+    // logger->info("Core {} Phase {}", t, client->callback.phase);
+    if (batch_txn_cnt < batch_txn_set->nr) {
+      batch_txn = batch_txn_set->txns[batch_txn_cnt];
+      batch_txn_cnt++;
+      
+      cnt++;
+      if ((cnt & 0x01F) == 0) {
+        transport.PeriodicIO(core_id);
+      } // Periodic flush
+
+      batch_txn->ResetRoot();
+      std::invoke(mem_func, batch_txn);
+      client->conf.CollectBufferPlan(batch_txn->root_promise(), batch_cnt);
+      
+      // svc.Complete(core_id);
+      continue;
+    } else {
+      bool node_finished = client->conf.FlushBufferPlan(client->per_core_cnts[t]);
+
+      // Try to assign a default partition scheme if nothing has been
+      // assigned. Because transactions are already round-robinned, there is no
+      // imbalanced here.
+
+      // These are used for corescaling, I think they are deprecated.
+      long extra_offset = 0;
+      for (auto i = client->core_limit; i < t; i++) {
+        extra_offset += client->cur_txns.load()->per_core_txns[i]->nr;
+      }
+      extra_offset %= client->core_limit;
+
+      auto &transport = util::Impl<PromiseRoutineTransportService>();
+      for (size_t i = 0; i < batch_txn_set->nr; i++) {
+        auto txn = batch_txn_set->txns[i];
+        auto aff = t;
+
+        if (client->callback.phase == EpochPhase::Execute
+            && t >= client->core_limit) {
+          // auto avail_nr_zones = client->core_limit / mem::kNrCorePerNode;
+          // auto zone = t % avail_nr_zones;
+          aff = (i + extra_offset) % client->core_limit;
+        }
+
+        auto root = txn->root_promise();
+        root->AssignAffinity(aff);
+        root->Complete();
+
+        // Doesn't seems to work that well, but just in case it works well for some
+        // workloads. For example, issuing takes a longer time.
+        if ((i & 0xFF) == 0) transport.PrefetchInbound();
+      }
+      set_urgent(false);
+
+      // Here we set the finished flag a bit earlier, so that FinishCompletion()
+      // could create the ExecutionRoutine a bit earlier.
+      finished = true;
+      transport.FinishCompletion(0);
+      
+      // Granola doesn't support out of order scheduling. In the original paper,
+      // Granola uses a single thread to issue. We use multiple threads, so here we
+      // have to barrier.
+      if ((EpochClient::g_enable_granola || EpochClient::g_enable_pwv) && client->callback.phase == EpochPhase::Execute) {
+        g_finished.fetch_add(1);
+
+        while (EpochClient::g_enable_granola && g_finished.load() != NodeConfiguration::g_nr_threads)
+          _mm_pause();
+      }
+
+      if (client->callback.phase == EpochPhase::Execute) {
+        VHandle::Quiescence();
+        RowEntity::Quiescence();
+
+        mem::GetDataRegion().Quiescence();
+      } else if (client->callback.phase == EpochPhase::Initialize) {
+      } else if (client->callback.phase == EpochPhase::Insert) {
+        util::Instance<GC>().RunGC();
+      }
+
+      trace(TRACE_COMPLETION "complete issueing and flushing network {}", node_finished);
+
+      client->completion.Complete();
+      if (node_finished) {
+        client->completion.Complete();
+      }
+    }
+
+    if (!svc.IsReady(core_id))
+      done = true; // piece issuing on this core has not finished, quit
+    else if (!transport.PeriodicIO(core_id))
+      done = true; // did not receive new piece from network
+  } while (!done);
+  logger->info( "Coroutine Exit on core {}", core_id);
+
+  trace(TRACE_EXEC_ROUTINE "Coroutine Exit on core {}", core_id);
+}
+
+void CallTxnsWorker::execution_phase_run(){
   auto nr_nodes = client->conf.nr_nodes();
   auto cnt = client->per_core_cnts[t];
   auto cnt_len = nr_nodes * nr_nodes * PromiseRoutineTransportService::kPromiseMaxLevels;
@@ -260,6 +416,7 @@ void CallTxnsWorker::Run()
   }
 
   bool node_finished = client->conf.FlushBufferPlan(client->per_core_cnts[t]);
+  // logger->info("Cnt core{} is {}", t,  client->completion.left_over());
 
   // Try to assign a default partition scheme if nothing has been
   // assigned. Because transactions are already round-robinned, there is no
@@ -327,6 +484,15 @@ void CallTxnsWorker::Run()
   }
 }
 
+void CallTxnsWorker::Run()
+{
+  if(client->callback.phase == EpochPhase::Execute){
+    execution_phase_run();
+  }else{ 
+    initialization_phase_run();
+  }
+}
+
 void EpochClient::CallTxns(uint64_t epoch_nr, TxnMemberFunc func, const char *label)
 {
   auto nr_threads = NodeConfiguration::g_nr_threads;
@@ -345,6 +511,7 @@ void EpochClient::CallTxns(uint64_t epoch_nr, TxnMemberFunc func, const char *la
   // pieces in this phase, and adjust this value when the counter arrives
   // eventually.
   completion.Increment((conf.nr_nodes() - 1) * kMaxPiecesPerPhase + 1 + nr_threads);
+  logger->info("Incremented cnt by {}", (conf.nr_nodes() - 1) * kMaxPiecesPerPhase + 1 + nr_threads);
 
   // The order here is very very important. First, we reset all issue
   // workers. After this step, the scheduler's IsReady() would return false.
@@ -365,6 +532,7 @@ void EpochClient::CallTxns(uint64_t epoch_nr, TxnMemberFunc func, const char *la
 
   // Last, let's start issuing txns.
   for (auto t = 0; t < nr_threads; t++) {
+    logger->info("Executing core {} Phase {}", t, callback.phase);
     auto r = &workers[t]->call_worker;
     go::GetSchedulerFromPool(t + 1)->WakeUp(r);
   }
@@ -385,7 +553,7 @@ void EpochClient::InitializeEpoch()
 
   cont_lmgr.Reset();
 
-  logger->info("Using EpochTxnSet {}", (void *) &all_txns[epoch_nr - 1]);
+  logger->info("Using EpochTxnSet {} with #batch txn {}", (void *) &all_txns[epoch_nr - 1], total_nr_txn);
 
   util::Instance<GC>().PrepareGCForAllCores();
 
@@ -653,6 +821,10 @@ Epoch *EpochManager::epoch(uint64_t epoch_nr) const
   abort_if(epoch_nr != cur_epoch_nr, "Confused by epoch_nr {} since current epoch is {}",
            epoch_nr, cur_epoch_nr);
   return cur_epoch;
+}
+
+EpochPhase EpochManager::current_phase(){
+  return cur_epoch.load()->client->get_current_epoch_phase();
 }
 
 uint8_t *EpochManager::ptr(uint64_t epoch_nr, int node_id, uint64_t offset) const

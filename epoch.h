@@ -63,6 +63,8 @@ class CallTxnsWorker : public EpochClientBaseWorker {
   using EpochClientBaseWorker::EpochClientBaseWorker;
   void Run() override final;
   void set_function(TxnMemberFunc func) { mem_func = func; }
+  void initialization_phase_run();
+  void execution_phase_run();
 };
 
 class AllocStateTxnWorker : public EpochClientBaseWorker {
@@ -165,7 +167,7 @@ class EpochClient {
     }
     return g_txn_per_epoch;
   };
-
+  EpochPhase get_current_epoch_phase(){return callback.phase;}
   static size_t g_txn_per_epoch;
   static constexpr size_t kMaxPiecesPerPhase = 12800000;
 
@@ -217,6 +219,7 @@ class EpochManager {
   uint8_t *ptr(uint64_t epoch_nr, int node_id, uint64_t offset) const;
 
   uint64_t current_epoch_nr() const { return cur_epoch_nr; }
+  EpochPhase current_phase();
   Epoch *current_epoch() const { return epoch(cur_epoch_nr); }
 
   void DoAdvance(EpochClient *client);

@@ -186,6 +186,7 @@ void BasePieceCollection::ExecutionRoutine::Run()
   auto &transport = util::Impl<PromiseRoutineTransportService>();
 
   int core_id = scheduler()->thread_pool_id() - 1;
+  // logger->info("ExecutionRoutine on Core {}", core_id);
   trace(TRACE_EXEC_ROUTINE "new ExecutionRoutine up and running on {}", core_id);
 
   PieceRoutine *next_r;

@@ -24,6 +24,7 @@ struct StockTxnInput {
 template <>
 StockTxnInput ClientBase::GenerateTransactionInput<StockTxnInput>();
 
+bool ECE496_Run(felis::PriorityTxn *txn);
 bool StockTxn_Run(felis::PriorityTxn *txn);
 bool NewOrderDeliveryTxn_Run(felis::PriorityTxn *txn);
 

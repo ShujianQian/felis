@@ -17,10 +17,13 @@ class CompletionObject {
   }
 
   void Complete(long dec = 1) {
+    // if(dec > 1){
+    //   logger->info("Completion decremented {}", dec);
+    // }
     callback.PreComplete();
     auto cnt = comp_count.fetch_sub(dec) - dec;
     if (cnt < 0) {
-      fprintf(stderr, "Completion handler isn't enough!\n");
+      fprintf(stderr, "Completion handler isn't enough %ld!\n", cnt);
       std::abort();
     }
     callback(cnt);
@@ -31,6 +34,9 @@ class CompletionObject {
   }
 
   void Increment(unsigned long inc) {
+    // if(inc > 1){
+    //   logger->info("Completion incremented {}", inc);
+    // }
     comp_count.fetch_add(inc);
   }
 

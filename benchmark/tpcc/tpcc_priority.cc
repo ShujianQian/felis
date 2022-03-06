@@ -16,10 +16,11 @@ void GeneratePriorityTxn() {
     for (auto j = 1; j <= txn_per_epoch; ++j) {
       PriorityTxn txn;
       int pct = r.next_u32() % 100 + 1;
-      if (pct < stock_pct)
-        txn.SetCallback(&StockTxn_Run);
-      else
-        txn.SetCallback(&NewOrderDeliveryTxn_Run);
+      txn.SetCallback(&ECE496_Run);
+      // if (pct < stock_pct)
+      //   txn.SetCallback(&StockTxn_Run);
+      // else
+      //   txn.SetCallback(&NewOrderDeliveryTxn_Run);
       txn.epoch = i;
       txn.delay = static_cast<uint64_t>(static_cast<double>(interval * j) * 2.2);
       // convert from nanosecond to tsc (our CPU is 2.2GHz)
@@ -56,6 +57,9 @@ std::string format_sid(uint64_t sid)
   return "node_id " + std::to_string(sid & 0x000000FF) +
          ", epoch " + std::to_string(sid >> 32) +
          ", txn sequence " + std::to_string(sid >> 8 & 0xFFFFFF);
+}
+bool ECE496_Run(PriorityTxn *txn){
+  return true;
 }
 
 bool StockTxn_Run(PriorityTxn *txn)
