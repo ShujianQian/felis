@@ -245,11 +245,12 @@ class PriorityTxn {
  friend class BasePieceCollection::ExecutionRoutine;
  friend class PriorityTxnService;
  private:
-  uint64_t sid;
   bool (*callback)(PriorityTxn *);
   bool initialized; // meaning the registered VHandles would be valid
 
  public:
+    uint64_t sid;
+
   int distance_max;
   int distance;
   unsigned int last_max_rts_seq;

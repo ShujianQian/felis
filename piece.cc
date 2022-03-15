@@ -186,7 +186,7 @@ void BasePieceCollection::ExecutionRoutine::Run()
   auto &transport = util::Impl<PromiseRoutineTransportService>();
 
   int core_id = scheduler()->thread_pool_id() - 1;
-  // logger->info("ExecutionRoutine on Core {}", core_id);
+   trace(TRACE_IPPT "ExecutionRoutine on Core {}", core_id);
   trace(TRACE_EXEC_ROUTINE "new ExecutionRoutine up and running on {}", core_id);
 
   PieceRoutine *next_r;
@@ -253,7 +253,11 @@ void BasePieceCollection::ExecutionRoutine::Run()
       continue;
     }
 
-    if (svc.Peek(core_id, should_pop)) {
+      if (core_id == 0) {
+          trace(TRACE_IPPT "Falling back to run batch");
+      }
+
+      if (svc.Peek(core_id, should_pop)) {
       cnt++;
       if ((cnt & 0x01F) == 0) {
         transport.PeriodicIO(core_id);
@@ -276,10 +280,13 @@ void BasePieceCollection::ExecutionRoutine::Run()
       continue;
     }
 
-    if (!svc.IsReady(core_id))
-      done = true; // piece issuing on this core has not finished, quit
-    else if (!transport.PeriodicIO(core_id))
-      done = true; // did not receive new piece from network
+    if (!svc.IsReady(core_id)) {
+        trace(TRACE_IPPT "Core {} not ready, leaving executionroutine");
+        done = true; // piece issuing on this core has not finished, quit
+    } else if (!transport.PeriodicIO(core_id)) {
+        trace(TRACE_IPPT "No more pieces after periodicIO, leaving executionroutine");
+        done = true; // did not receive new piece from network
+    }
   } while (!done);
 
   trace(TRACE_EXEC_ROUTINE "Coroutine Exit on core {}", core_id);

@@ -242,159 +242,190 @@ void AllocStateTxnWorker::Run()
 
 void CallTxnsWorker::initialization_phase_run()
 {
-  auto nr_nodes = client->conf.nr_nodes();
-  auto batch_cnt = client->per_core_cnts[t];
-  auto batch_cnt_len = nr_nodes * nr_nodes * PromiseRoutineTransportService::kPromiseMaxLevels;
-  std::fill(batch_cnt, batch_cnt + batch_cnt_len, 0);
+    auto nr_nodes = client->conf.nr_nodes();
+    auto batch_cnt = client->per_core_cnts[t];
+    auto batch_cnt_len = nr_nodes * nr_nodes
+            * PromiseRoutineTransportService::kPromiseMaxLevels;
+    std::fill(batch_cnt, batch_cnt + batch_cnt_len, 0);
 
-  set_urgent(true);
-  auto batch_txn_set = client->cur_txns.load()->per_core_txns[t];
+    set_urgent(true);
+    auto batch_txn_set = client->cur_txns.load()->per_core_txns[t];
 
-  while (AllocStateTxnWorker::comp.load() != 0) _mm_pause();
-  
-  /* Code From ExecutionRoutine */
-  auto &svc = util::Impl<PromiseRoutineDispatchService>();
-  auto &transport = util::Impl<PromiseRoutineTransportService>();
+    while (AllocStateTxnWorker::comp.load() != 0) _mm_pause();
 
-  int core_id = scheduler()->thread_pool_id() - 1;
-  trace(TRACE_EXEC_ROUTINE "new ExecutionRoutine up and running on {}", core_id);
+    /* Code From ExecutionRoutine */
+    auto &svc = util::Impl<PromiseRoutineDispatchService>();
+    auto &transport = util::Impl<PromiseRoutineTransportService>();
 
-  PieceRoutine *next_r;
-  go::Scheduler *sched = scheduler();
+    int core_id = scheduler()->thread_pool_id() - 1;
+    trace(TRACE_EXEC_ROUTINE
+          "new ExecutionRoutine up and running on {}",
+          core_id);
 
-  auto should_pop_pri = PromiseRoutineDispatchService::GenericDispatchPeekListener(
-      [&next_r, sched]
-      (PieceRoutine *r, BasePieceCollection::ExecutionRoutine *state) -> bool {
-        if (state != nullptr) {
-          if (state->is_detached()) {
-            trace(TRACE_EXEC_ROUTINE "Wakeup Coroutine {}", (void *) state);
-            state->Init();
-            sched->WakeUp(state);
-          } else {
-            trace(TRACE_EXEC_ROUTINE "Found a sleeping Coroutine, but it's already awaken.");
-          }
-          return false;
+    PieceRoutine *next_r;
+    go::Scheduler *sched = scheduler();
+
+    auto should_pop_pri =
+            PromiseRoutineDispatchService::GenericDispatchPeekListener(
+                    [&next_r, sched]
+                            (PieceRoutine *r,
+                             BasePieceCollection::ExecutionRoutine *state) -> bool {
+                        if (state != nullptr) {
+                            if (state->is_detached()) {
+                                trace(TRACE_EXEC_ROUTINE
+                                      "Wakeup Coroutine {}",
+                                      (void *) state);
+                                state->Init();
+                                sched->WakeUp(state);
+                            } else {
+                                trace(TRACE_EXEC_ROUTINE
+                                      "Found a sleeping Coroutine, but it's already awaken.");
+                            }
+                            return false;
+                        }
+                        if (!r->is_priority) // is not a piece from priority txn
+                            return false;
+                        next_r = r;
+                        return true;
+                    });
+
+    unsigned long cnt = 0x01F;
+    PriorityTxn *txn;
+    BaseTxn *batch_txn;
+    int batch_txn_cnt = 0;
+
+    bool done = false;
+    do {
+        if (core_id == 0) {
+            trace(TRACE_IPPT "At the beginning of init_phase_run_while");
         }
-        if (!r->is_priority) // is not a piece from priority txn
-          return false;
-        next_r = r;
-        return true;
-      });
+        if (svc.Peek(core_id, should_pop_pri)) {
+            if (core_id == 0) {
+                trace(TRACE_IPPT "Should pop pri");
+            }
+            auto rt = next_r;
 
-  unsigned long cnt = 0x01F;
-  PriorityTxn *txn;
-  BaseTxn* batch_txn;
-  int batch_txn_cnt = 0;
-
-  bool done = false;
-  do {
-    if (svc.Peek(core_id, should_pop_pri)) {
-      auto rt = next_r;
-
-      util::Instance<PriorityTxnService>().UpdateProgress(core_id, rt->sched_key);
-      rt->callback(rt);
-      svc.Complete(core_id, PromiseRoutineDispatchService::CompleteType::PriorityPiece);
-      continue;
-    }
-
-    if (svc.Peek(core_id, txn)) {
-      txn->Run();
-      svc.Complete(core_id, PromiseRoutineDispatchService::CompleteType::PriorityInit);
-      continue;
-    }
-    // logger->info("Core {} Phase {}", t, client->callback.phase);
-    if (batch_txn_cnt < batch_txn_set->nr) {
-      batch_txn = batch_txn_set->txns[batch_txn_cnt];
-      batch_txn_cnt++;
-      
-      cnt++;
-      if ((cnt & 0x01F) == 0) {
-        transport.PeriodicIO(core_id);
-      } // Periodic flush
-
-      batch_txn->ResetRoot();
-      std::invoke(mem_func, batch_txn);
-      client->conf.CollectBufferPlan(batch_txn->root_promise(), batch_cnt);
-      
-      // svc.Complete(core_id);
-      continue;
-    } else {
-      bool node_finished = client->conf.FlushBufferPlan(client->per_core_cnts[t]);
-
-      // Try to assign a default partition scheme if nothing has been
-      // assigned. Because transactions are already round-robinned, there is no
-      // imbalanced here.
-
-      // These are used for corescaling, I think they are deprecated.
-      long extra_offset = 0;
-      for (auto i = client->core_limit; i < t; i++) {
-        extra_offset += client->cur_txns.load()->per_core_txns[i]->nr;
-      }
-      extra_offset %= client->core_limit;
-
-      auto &transport = util::Impl<PromiseRoutineTransportService>();
-      for (size_t i = 0; i < batch_txn_set->nr; i++) {
-        auto txn = batch_txn_set->txns[i];
-        auto aff = t;
-
-        if (client->callback.phase == EpochPhase::Execute
-            && t >= client->core_limit) {
-          // auto avail_nr_zones = client->core_limit / mem::kNrCorePerNode;
-          // auto zone = t % avail_nr_zones;
-          aff = (i + extra_offset) % client->core_limit;
+            util::Instance<PriorityTxnService>().UpdateProgress(core_id,
+                                                                rt->sched_key);
+            rt->callback(rt);
+            svc.Complete(core_id,
+                         PromiseRoutineDispatchService::CompleteType::PriorityPiece);
+            continue;
         }
 
-        auto root = txn->root_promise();
-        root->AssignAffinity(aff);
-        root->Complete();
+        if (svc.Peek(core_id, txn)) {
+            if (core_id == 0) {
+                trace(TRACE_IPPT "Should pop txn");
+            }
+            txn->Run();
+            svc.Complete(core_id,
+                         PromiseRoutineDispatchService::CompleteType::PriorityInit);
+            continue;
+        }
+        // trace(TRACE_IPPT "Core {} Phase {}", t, client->callback.phase);
 
-        // Doesn't seems to work that well, but just in case it works well for some
-        // workloads. For example, issuing takes a longer time.
-        if ((i & 0xFF) == 0) transport.PrefetchInbound();
-      }
-      set_urgent(false);
+        if (core_id == 0) {
+            trace(TRACE_IPPT "Falling back to run batch");
+        }
 
-      // Here we set the finished flag a bit earlier, so that FinishCompletion()
-      // could create the ExecutionRoutine a bit earlier.
-      finished = true;
-      transport.FinishCompletion(0);
-      
-      // Granola doesn't support out of order scheduling. In the original paper,
-      // Granola uses a single thread to issue. We use multiple threads, so here we
-      // have to barrier.
-      if ((EpochClient::g_enable_granola || EpochClient::g_enable_pwv) && client->callback.phase == EpochPhase::Execute) {
-        g_finished.fetch_add(1);
+        if (batch_txn_cnt < batch_txn_set->nr) {
+            batch_txn = batch_txn_set->txns[batch_txn_cnt];
+            batch_txn_cnt++;
 
-        while (EpochClient::g_enable_granola && g_finished.load() != NodeConfiguration::g_nr_threads)
-          _mm_pause();
-      }
+            cnt++;
+            if ((cnt & 0x01F) == 0) {
+                transport.PeriodicIO(core_id);
+            } // Periodic flush
 
-      if (client->callback.phase == EpochPhase::Execute) {
-        VHandle::Quiescence();
-        RowEntity::Quiescence();
+            batch_txn->ResetRoot();
+            std::invoke(mem_func, batch_txn);
+            client->conf.CollectBufferPlan(batch_txn->root_promise(),
+                                           batch_cnt);
 
-        mem::GetDataRegion().Quiescence();
-      } else if (client->callback.phase == EpochPhase::Initialize) {
-      } else if (client->callback.phase == EpochPhase::Insert) {
-        util::Instance<GC>().RunGC();
-      }
+            // svc.Complete(core_id);
+            continue;
+        } else {
+            bool node_finished =
+                    client->conf.FlushBufferPlan(client->per_core_cnts[t]);
 
-      trace(TRACE_COMPLETION "complete issueing and flushing network {}", node_finished);
+            // Try to assign a default partition scheme if nothing has been
+            // assigned. Because transactions are already round-robinned, there is no
+            // imbalanced here.
 
-      client->completion.Complete();
-      if (node_finished) {
-        client->completion.Complete();
-      }
-    }
+            // These are used for corescaling, I think they are deprecated.
+            long extra_offset = 0;
+            for (auto i = client->core_limit; i < t; i++) {
+                extra_offset += client->cur_txns.load()->per_core_txns[i]->nr;
+            }
+            extra_offset %= client->core_limit;
 
-    if (!svc.IsReady(core_id))
-      done = true; // piece issuing on this core has not finished, quit
-    else if (!transport.PeriodicIO(core_id))
-      done = true; // did not receive new piece from network
-  } while (!done);
-  logger->info( "Coroutine Exit on core {}", core_id);
+            auto &transport = util::Impl<PromiseRoutineTransportService>();
+            for (size_t i = 0; i < batch_txn_set->nr; i++) {
+                auto txn = batch_txn_set->txns[i];
+                auto aff = t;
 
-  trace(TRACE_EXEC_ROUTINE "Coroutine Exit on core {}", core_id);
+                if (client->callback.phase == EpochPhase::Execute
+                        && t >= client->core_limit) {
+                    // auto avail_nr_zones = client->core_limit / mem::kNrCorePerNode;
+                    // auto zone = t % avail_nr_zones;
+                    aff = (i + extra_offset) % client->core_limit;
+                }
+
+                auto root = txn->root_promise();
+                root->AssignAffinity(aff);
+                root->Complete();
+
+                // Doesn't seems to work that well, but just in case it works well for some
+                // workloads. For example, issuing takes a longer time.
+                if ((i & 0xFF) == 0) transport.PrefetchInbound();
+            }
+            set_urgent(false);
+
+            // Here we set the finished flag a bit earlier, so that FinishCompletion()
+            // could create the ExecutionRoutine a bit earlier.
+            finished = true;
+            transport.FinishCompletion(0);
+
+            // Granola doesn't support out of order scheduling. In the original paper,
+            // Granola uses a single thread to issue. We use multiple threads, so here we
+            // have to barrier.
+            if ((EpochClient::g_enable_granola || EpochClient::g_enable_pwv)
+                    && client->callback.phase == EpochPhase::Execute) {
+                g_finished.fetch_add(1);
+
+                while (EpochClient::g_enable_granola
+                        && g_finished.load() != NodeConfiguration::g_nr_threads)
+                    _mm_pause();
+            }
+
+            if (client->callback.phase == EpochPhase::Execute) {
+                VHandle::Quiescence();
+                RowEntity::Quiescence();
+
+                mem::GetDataRegion().Quiescence();
+            } else if (client->callback.phase == EpochPhase::Initialize) {
+            } else if (client->callback.phase == EpochPhase::Insert) {
+                util::Instance<GC>().RunGC();
+            }
+
+            trace(TRACE_COMPLETION
+                  "complete issueing and flushing network {}",
+                  node_finished);
+
+            client->completion.Complete();
+            if (node_finished) {
+                client->completion.Complete();
+            }
+        }
+
+        if (!svc.IsReady(core_id))
+            done = true; // piece issuing on this core has not finished, quit
+        else if (!transport.PeriodicIO(core_id))
+            done = true; // did not receive new piece from network
+    } while (!done);
+    trace(TRACE_IPPT "Coroutine Exit on core {}", core_id);
+
+    trace(TRACE_EXEC_ROUTINE "Coroutine Exit on core {}", core_id);
 }
 
 void CallTxnsWorker::execution_phase_run(){
@@ -416,7 +447,7 @@ void CallTxnsWorker::execution_phase_run(){
   }
 
   bool node_finished = client->conf.FlushBufferPlan(client->per_core_cnts[t]);
-  // logger->info("Cnt core{} is {}", t,  client->completion.left_over());
+  // trace(TRACE_IPPT "Cnt core{} is {}", t,  client->completion.left_over());
 
   // Try to assign a default partition scheme if nothing has been
   // assigned. Because transactions are already round-robinned, there is no
@@ -451,10 +482,15 @@ void CallTxnsWorker::execution_phase_run(){
   }
   set_urgent(false);
 
+    int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+
+    trace(TRACE_IPPT "Core {} entering from finish completion.", core_id);
   // Here we set the finished flag a bit earlier, so that FinishCompletion()
   // could create the ExecutionRoutine a bit earlier.
   finished = true;
   transport.FinishCompletion(0);
+
+  trace(TRACE_IPPT "Core {} returned from finish completion.", core_id);
 
   // Granola doesn't support out of order scheduling. In the original paper,
   // Granola uses a single thread to issue. We use multiple threads, so here we
@@ -478,10 +514,13 @@ void CallTxnsWorker::execution_phase_run(){
 
   trace(TRACE_COMPLETION "complete issueing and flushing network {}", node_finished);
 
+  trace(TRACE_IPPT "Core {} entering complete", core_id);
   client->completion.Complete();
   if (node_finished) {
+      trace(TRACE_IPPT "Core {} entering complete a second time", core_id);
     client->completion.Complete();
   }
+    trace(TRACE_IPPT "Core {} leaving execution_phase_run", core_id);
 }
 
 void CallTxnsWorker::Run()
@@ -511,7 +550,7 @@ void EpochClient::CallTxns(uint64_t epoch_nr, TxnMemberFunc func, const char *la
   // pieces in this phase, and adjust this value when the counter arrives
   // eventually.
   completion.Increment((conf.nr_nodes() - 1) * kMaxPiecesPerPhase + 1 + nr_threads);
-  logger->info("Incremented cnt by {}", (conf.nr_nodes() - 1) * kMaxPiecesPerPhase + 1 + nr_threads);
+  trace(TRACE_IPPT "Incremented cnt by {}", (conf.nr_nodes() - 1) * kMaxPiecesPerPhase + 1 + nr_threads);
 
   // The order here is very very important. First, we reset all issue
   // workers. After this step, the scheduler's IsReady() would return false.
@@ -532,7 +571,7 @@ void EpochClient::CallTxns(uint64_t epoch_nr, TxnMemberFunc func, const char *la
 
   // Last, let's start issuing txns.
   for (auto t = 0; t < nr_threads; t++) {
-    logger->info("Executing core {} Phase {}", t, callback.phase);
+    trace(TRACE_IPPT "Executing core {} Phase {}", t, callback.phase);
     auto r = &workers[t]->call_worker;
     go::GetSchedulerFromPool(t + 1)->WakeUp(r);
   }
@@ -572,6 +611,17 @@ void EpochClient::InitializeEpoch()
 
 void EpochClient::OnInsertComplete()
 {
+
+    if (NodeConfiguration::g_priority_txn) {
+        auto &svc = util::Instance<PriorityTxnService>();
+        for (int i = 0; i < NodeConfiguration::g_nr_threads; ++i) {
+            auto pcs = svc.PriPcCnt[i]->Get();
+            abort_if(pcs != 0, "[On Insert Complete] Priority piece cnt [{}] != 0, {}", i, pcs);
+            pcs = svc.BatchPcCnt[i]->Get();
+            abort_if(pcs != 0, "[On Insert Complete] Batch piece cnt [{}] != 0, {}", i, pcs);
+        }
+    }
+
   // GC must have been completed
   auto &gc = util::Instance<GC>();
   gc.PrintStats();
@@ -589,6 +639,19 @@ void EpochClient::OnInsertComplete()
 
 void EpochClient::OnInitializeComplete()
 {
+
+    if (NodeConfiguration::g_priority_txn) {
+        auto &svc = util::Instance<PriorityTxnService>();
+        for (int i = 0; i < NodeConfiguration::g_nr_threads; ++i) {
+            auto pcs = svc.PriPcCnt[i]->Get();
+            abort_if(pcs != 0, "[On Initialization Complete] Priority piece cnt [{}] != 0, {}", i, pcs);
+            pcs = svc.BatchPcCnt[i]->Get();
+            abort_if(pcs != 0, "[On Initialization Complete] Batch piece cnt [{}] != 0, {}", i,
+                     pcs);
+        }
+    }
+
+
   stats.initialize_time_ms += callback.perf.duration_ms();
   probes::EndOfPhase{util::Instance<EpochManager>().current_epoch_nr(), 1}();
 
@@ -629,9 +692,9 @@ void EpochClient::OnExecuteComplete()
     auto &svc = util::Instance<PriorityTxnService>();
     for (int i = 0; i < NodeConfiguration::g_nr_threads; ++i) {
       auto pcs = svc.PriPcCnt[i]->Get();
-      abort_if(pcs != 0, "Priority piece cnt [{}] != 0, {}", i, pcs);
+      abort_if(pcs != 0, "[On Execute Complete] Priority piece cnt [{}] != 0, {}", i, pcs);
       pcs = svc.BatchPcCnt[i]->Get();
-      abort_if(pcs != 0, "Batch piece cnt [{}] != 0, {}", i, pcs);
+      abort_if(pcs != 0, "[On Execute Complete] Batch piece cnt [{}] != 0, {}", i, pcs);
     }
   }
   fmt::memory_buffer buf;

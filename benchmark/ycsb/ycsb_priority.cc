@@ -1,5 +1,7 @@
 #include "benchmark/ycsb/ycsb_priority.h"
 
+#include "sid_info.h"
+
 namespace ycsb {
 
 using namespace felis;
@@ -46,6 +48,7 @@ std::string format_sid(uint64_t sid)
 
 bool MWTxn_Run(PriorityTxn *txn)
 {
+    trace(TRACE_IPPT"Running MWTxn");
   // record pri txn init queue time
   uint64_t start_tsc = __rdtsc();
   uint64_t init_q = (start_tsc - (txn->delay + PriorityTxnService::g_tsc)) / 2200;
@@ -85,8 +88,11 @@ bool MWTxn_Run(PriorityTxn *txn)
   txn->measure_tsc = succ_tsc;
   probes::PriInitQueueTime{init_q, txn->serial_id()}(); // recorded before
   probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
-  if (give_up)
-    return false;
+  if (give_up) {
+
+      trace(TRACE_IPPT "Batch count already reached 0, give up");
+      return false;
+  }
 
   struct Context {
     int nr;
@@ -123,6 +129,10 @@ bool MWTxn_Run(PriorityTxn *txn)
             auto total = exec_tsc - (ctx.txn->delay + PriorityTxnService::g_tsc);
             probes::PriExecTime{exec / 2200, total / 2200, ctx.txn->serial_id()}();
           }
+
+          auto core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+          trace(TRACE_IPPT "Fuiyoh!! I ran! on core {} SID: {} piece_no: {}", core_id, sid_info(ctx.txn->sid),
+                piece_id);
         };
     Context ctx{input.nr, input.keys[i], rows[i], txn};
     txn->IssuePromise(ctx, lambda);

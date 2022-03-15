@@ -154,7 +154,7 @@ void PWVScheduler::OnNodeRVPChangeImpl(FreeNodeEntry *node_ent)
   util::MCSSpinLock::QNode qnode;
   qlock.Acquire(&qnode);
   if (node_ent->in_rvp_queue) {
-    // logger->info("notify rvp change for {} !", node_ent->ent->key);
+    // logger->("notify rvp change for {} !", node_ent->ent->key);
     node_ent->Remove();
     node_ent->InsertAfter(free.prev);
     node_ent->in_rvp_queue = false;
@@ -381,44 +381,44 @@ void EpochExecutionDispatchService::Reset()
   tot_bubbles = 0;
 }
 
-
 void EpochExecutionDispatchService::Add(int core_id, PieceRoutine **routines,
                                         size_t nr_routines, bool from_pri)
 {
-  auto &lock = queues[core_id]->lock;
-  lock.Lock();
+    auto &lock = queues[core_id]->lock;
+    lock.Lock();
 
-  auto &pq = queues[core_id]->pq.pending;
-  size_t i = 0;
+    auto &pq = queues[core_id]->pq.pending;
+    size_t i = 0;
 
-  auto max_item_percore = g_max_item / NodeConfiguration::g_nr_threads;
+    auto max_item_percore = g_max_item / NodeConfiguration::g_nr_threads;
 
-again:
-  size_t pdelta = 0,
-           pend = pq.end.load(std::memory_order_acquire),
-         plimit = max_item_percore
-                  - (pend - pq.start.load(std::memory_order_acquire));
+    again:
+    size_t pdelta = 0,
+            pend = pq.end.load(std::memory_order_acquire),
+            plimit = max_item_percore
+            - (pend - pq.start.load(std::memory_order_acquire));
 
-  for (; i < nr_routines; i++) {
-    auto r = routines[i];
-    auto key = r->sched_key;
-    if (pdelta >= plimit) goto again;
-    auto pos = pend + pdelta++;
-    pq.q[pos % max_item_percore] = r;
-  }
-  if (pdelta)
-    pq.end.fetch_add(pdelta, std::memory_order_release);
-  lock.Unlock();
-  // util::Impl<VHandleSyncService>().Notify(1 << core_id);
-
-  if (NodeConfiguration::g_priority_txn) {
-    if (from_pri) {
-      util::Instance<PriorityTxnService>().PriPcCnt[core_id]->Increment(nr_routines);
-      ProcessPending(queues[core_id]->pq);
-    } else {
-      util::Instance<PriorityTxnService>().BatchPcCnt[core_id]->Increment(nr_routines);
+    for (; i < nr_routines; i++) {
+        auto r = routines[i];
+        auto key = r->sched_key;
+        if (pdelta >= plimit) goto again;
+        auto pos = pend + pdelta++;
+        pq.q[pos % max_item_percore] = r;
     }
-  }
+    if (pdelta)
+        pq.end.fetch_add(pdelta, std::memory_order_release);
+    lock.Unlock();
+    // util::Impl<VHandleSyncService>().Notify(1 << core_id);
+
+    if (NodeConfiguration::g_priority_txn) {
+        if (from_pri) {
+            util::Instance<PriorityTxnService>().PriPcCnt[core_id]->Increment(nr_routines);
+            ProcessPending(queues[core_id]->pq);
+        } else {
+            trace(TRACE_IPPT "Incrementing Batch Pc Cnt on Core {} by {}", core_id, nr_routines);
+            util::Instance<PriorityTxnService>().BatchPcCnt[core_id]->Increment(nr_routines);
+        }
+    }
 }
 
 void EpochExecutionDispatchService::Add(int core_id, PriorityTxn *txn)
@@ -505,6 +505,7 @@ void EpochExecutionDispatchService::ProcessBatchCounter(int core_id)
   auto &state = queues[core_id]->state;
   auto &bc = state.batch_complete_counter;
   auto cnt = bc.completed;
+//  logger->info("Decrementing Batch Pc Cnt on Core {} by {}", core_id, cnt);
   util::Instance<PriorityTxnService>().BatchPcCnt[core_id]->Decrement(cnt);
   bc.completed = 0;
 }
@@ -527,6 +528,8 @@ EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_po
   auto &q = queues[core_id]->pq;
   auto &lock = queues[core_id]->lock;
   auto &state = queues[core_id]->state;
+
+//    this->ProcessBatchCounter(core_id);
 
   state.running = State::kDeciding;
   if (util::Instance<EpochManager>().current_phase() == EpochPhase::Execute && !IsReady(core_id)) {
@@ -586,6 +589,7 @@ EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_po
   auto comp = EpochClient::g_workload_client->completion_object();
   c.completed = 0;
 
+  // TODO: Shujian: This bubbles seems to be unused
   unsigned long nr_bubbles = tot_bubbles.load();
   while (!tot_bubbles.compare_exchange_strong(nr_bubbles, 0));
 
@@ -597,66 +601,118 @@ EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_po
     comp->Complete(n + nr_bubbles);
   }
 
+//  logger->info("Reached the last process batch counter core {}", core_id);
+
   this->ProcessBatchCounter(core_id);
   return false;
 }
 
 bool EpochExecutionDispatchService::Peek(int core_id, PriorityTxn *&txn, bool dry_run)
 {
-  if (!NodeConfiguration::g_priority_txn)
-    return false;
+    auto curr_phase = util::Instance<EpochManager>().current_phase();
 
-  // hacks: for the time being we don't have occ yet, so only run priority txns
-  //        during execution phase's pieces execution.
-  // hack 1: if still during issuing, don't run
-  if (util::Instance<EpochManager>().current_phase() == EpochPhase::Execute && !IsReady(core_id)) {
-    return false;
-  }
-
-  // hack 2: if on this core, no batched pieces of this epoch has ever been run
-  // (which leads to prog not being updated), don't run
-  uint64_t prog = util::Instance<PriorityTxnService>().GetProgress(core_id);
-  if (prog >> 32 != util::Instance<EpochManager>().current_epoch_nr())
-    return false;
-
-  // hack 3: make sure pq doesn't get run after this core has no piece to run
-  if (queues[core_id]->pq.sched_pol->len == 0)
-    return false;
-  this->ProcessBatchCounter(core_id);
-  if (util::Instance<PriorityTxnService>().BatchPcCnt[core_id]->Get() == 0)
-    return false;
-
-  auto &tq = queues[core_id]->tq;
-  auto tstart = tq.start.load(std::memory_order_acquire);
-  if (tstart < tq.end.load(std::memory_order_acquire)) {
-    PriorityTxn *candidate = tq.q + tstart;
-    auto epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
-    if (candidate->epoch != epoch_nr) {
-
-      // hack 4: if a priority txn is from a previous epoch, skip it
-      if (candidate->epoch < epoch_nr) {
-        auto from = tstart;
-        while (tstart < tq.end.load(std::memory_order_acquire) && candidate->epoch < epoch_nr)
-          candidate = tq.q + ++tstart;
-        tq.start.store(tstart, std::memory_order_release);
-        // trace(TRACE_PRIORITY "core {} SKIPPED from pos {} ({}) to pos {} ({})", core_id, from, from * 32 + core_id + 1, tstart, tstart * 32 + core_id + 1);
-      }
-
-      return false;
+    if (core_id == 0) {
+        trace(TRACE_IPPT "Peeking for new priority txn");
     }
 
-    if (__rdtsc() - PriorityTxnService::g_tsc < candidate->delay)
-      return false;
-    if (!dry_run) {
-      tq.start.store(tstart + 1, std::memory_order_release);
-      txn = candidate;
-      EpochClient::g_workload_client->completion_object()->Increment(1);
+    if (!NodeConfiguration::g_priority_txn)
+        return false;
+
+    // hacks: for the time being we don't have occ yet, so only run priority txns
+    //        during execution phase's pieces execution.
+    // hack 1: if still during issuing, don't run
+    if (util::Instance<EpochManager>().current_phase() == EpochPhase::Execute
+            && !IsReady(core_id)) {
+
+        if (core_id == 0) {
+            logger->info("Caught by hack 1, is not ready");
+        }
+
+        return false;
     }
 
-    // trace(TRACE_PRIORITY "core {} peeked on pos {} (pri id {}), txn {:p}", core_id, tstart, tstart * 32 + core_id + 1, (void*)txn);
-    return true;
-  }
-  return false;
+    // hack 2: if on this core, no batched pieces of this epoch has ever been run
+    // (which leads to prog not being updated), don't run
+    uint64_t prog = util::Instance<PriorityTxnService>().GetProgress(core_id);
+    if (curr_phase == EpochPhase::Execute && prog >> 32 !=
+            util::Instance<EpochManager>().current_epoch_nr()) {
+        if (core_id == 0) {
+            trace(TRACE_IPPT "Caught by hack 2, run a batch first");
+        }
+
+        return false;
+    }
+
+    // hack 3: make sure pq doesn't get run after this core has no piece to run
+    if (curr_phase == EpochPhase::Execute && queues[core_id]->pq.sched_pol->len
+            == 0) {
+
+        if (core_id == 0) {
+            trace(TRACE_IPPT "Caught by hack 3, no pieces to run now");
+        }
+
+        return false;
+    }
+
+    if (curr_phase == EpochPhase::Execute) {
+        this->ProcessBatchCounter(core_id);
+        if (util::Instance<PriorityTxnService>().BatchPcCnt[core_id]->Get() == 0) {
+
+            if (core_id == 0) {
+                trace(TRACE_IPPT "Caught by hack 3.5, batch counter is 0");
+            }
+
+            return false;
+        }
+    }
+
+    auto &tq = queues[core_id]->tq;
+    auto tstart = tq.start.load(std::memory_order_acquire);
+    if (tstart < tq.end.load(std::memory_order_acquire)) {
+        PriorityTxn *candidate = tq.q + tstart;
+        auto epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
+        if (candidate->epoch != epoch_nr) {
+
+            // hack 4: if a priority txn is from a previous epoch, skip it
+            if (curr_phase == EpochPhase::Execute&& candidate->epoch <
+                    epoch_nr) {
+                auto from = tstart;
+                while (tstart < tq.end.load(std::memory_order_acquire)
+                        && candidate->epoch < epoch_nr)
+                    candidate = tq.q + ++tstart;
+                tq.start.store(tstart, std::memory_order_release);
+                // trace(TRACE_PRIORITY "core {} SKIPPED from pos {} ({}) to pos {} ({})", core_id, from, from * 32 + core_id + 1, tstart, tstart * 32 + core_id + 1);
+                if (core_id == 0) {
+                    trace(TRACE_IPPT "Caught by hack 4, skipping pt from prev epochs");
+                }
+            }
+
+            if (core_id == 0) {
+                trace(TRACE_IPPT "Caught by hack 4.5, do not start next epoch's priority txn");
+            }
+
+            return false;
+        }
+
+        if (__rdtsc() - PriorityTxnService::g_tsc < candidate->delay) {
+
+            if (core_id == 0) {
+                trace(TRACE_IPPT "Caught by hack 5, delay constraint");
+            }
+
+            return false;
+        }
+
+        if (!dry_run) {
+            tq.start.store(tstart + 1, std::memory_order_release);
+            txn = candidate;
+            EpochClient::g_workload_client->completion_object()->Increment(1);
+        }
+
+        // trace(TRACE_PRIORITY "core {} peeked on pos {} (pri id {}), txn {:p}", core_id, tstart, tstart * 32 + core_id + 1, (void*)txn);
+        return true;
+    }
+    return false;
 }
 
 void EpochExecutionDispatchService::AddBubble()
