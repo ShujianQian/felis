@@ -11,6 +11,7 @@
 #include "varstr.h"
 #include "shipping.h"
 #include "entity.h"
+#include "extravhandle.h"
 
 namespace felis {
 
@@ -168,7 +169,8 @@ class LinkedListExtraVHandle {
 #ifdef ARRAY_EXTRA_VHANDLE
 class ExtraVHandle : public ArrayExtraVHandle {};
 #else
-class ExtraVHandle : public LinkedListExtraVHandle {};
+//class ExtraVHandle : public LinkedListExtraVHandle {};
+class ExtraVHandle : public DoublyLinkedListExtraVHandle {};
 #endif
 static_assert(sizeof(ExtraVHandle) <= 64, "ExtraVHandle is larger than a cache line");
 

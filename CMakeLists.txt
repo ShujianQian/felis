@@ -24,6 +24,7 @@ add_executable(db
         commit_buffer.cc shipping.cc entity.cc iface.cc slice.cc tcp_node.cc
         felis_probes.cc
         priority.cc
+        extravhandle.cc extravhandle.h
 
         json11/json11.cpp
 

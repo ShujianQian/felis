@@ -120,6 +120,7 @@ class AllocatorModule : public Module<CoreModule> {
     // logger->info("setting up regions {}", i);
     tasks.emplace_back([]() { mem::GetDataRegion().InitPools(); });
     tasks.emplace_back(VHandle::InitPool);
+    tasks.emplace_back(ExtraVHandle::InitPool);
     tasks.emplace_back(ExtraVHandle::Entry::InitPool);
     tasks.emplace_back(BaseInsertKey::InitPool);
     tasks.emplace_back(RowEntity::InitPool);

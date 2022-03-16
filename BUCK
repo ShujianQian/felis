@@ -50,6 +50,7 @@ db_headers = [
     'util/arch.h', 'util/factory.h', 'util/linklist.h', 'util/locks.h', 'util/lowerbound.h', 'util/objects.h', 'util/random.h', 'util/types.h',
     'pwv_graph.h',
     'priority.h',
+    'extravhandle.h',
 ]
 
 db_srcs = [
@@ -60,6 +61,7 @@ db_srcs = [
     'commit_buffer.cc', 'shipping.cc', 'entity.cc', 'iface.cc', 'slice.cc', 'tcp_node.cc',
     'felis_probes.cc',
     'priority.cc',
+    'extravhandle.cc',
     'json11/json11.cpp',
     'spdlog/src/spdlog.cpp', 'spdlog/src/fmt.cpp', 'spdlog/src/stdout_sinks.cpp', 'spdlog/src/async.cpp', 'spdlog/src/cfg.cpp', 'spdlog/src/color_sinks.cpp', 'spdlog/src/file_sinks.cpp',
     'xxHash/xxhash.c', 'util/os_linux.cc', 'util/locks.cc',
