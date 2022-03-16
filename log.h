@@ -77,6 +77,7 @@ static void debug(std::string_view fmt, T... args)
 #define TRACE_COMPLETION // "\x7f" "Trace Completion: "
 #define TRACE_PRIORITY  // "\x7f" "Trace PriorityTxn: "
 #define TRACE_IPPT // "\x7f" "Trace IPPT Debug: "
+#define TRACE_DEADLOCK "\x7f" "Trace deadlock: "
 
 // Debug tags
 #define DBG_WORKLOAD // "\x7f" "Workload: "

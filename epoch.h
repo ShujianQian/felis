@@ -92,6 +92,7 @@ class EpochCallback {
   friend class EpochClient;
   friend class CallTxnsWorker;
   friend class DoublyLinkedListExtraVHandle;
+  friend class SortedArrayVHandle;
   PerfLog perf;
   EpochClient *client;
   const char *label;
@@ -177,6 +178,8 @@ class EpochClient {
   friend class BaseTxn;
   friend class EpochCallback;
   friend class DoublyLinkedListExtraVHandle;
+  friend class SortedArrayVHandle;
+
 
   void InitializeEpoch();
   void ExecuteEpoch();

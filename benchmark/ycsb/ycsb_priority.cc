@@ -118,6 +118,7 @@ bool MWTxn_Run(PriorityTxn *txn)
             ctx.txn->measure_tsc = queue_tsc;
           }
 
+//          trace(TRACE_DEADLOCK "sid {} read on row {}", sid_info(ctx.txn->sid), ctx.key);
           auto row = ctx.txn->Read<Ycsb::Value>(ctx.row);
           row.v.resize_junk(90);
           ctx.txn->Write(ctx.row, row);

@@ -307,6 +307,30 @@ VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
   int pos;
   volatile uintptr_t *addr = WithVersion(sid, pos);
 
+  // TODO: Shujian
+  //  A *serious* hack for allowing priority txn to read empty batch
+  //  by letting it read a useless last_batch_obj.
+  if (EpochClient::g_workload_client->callback.phase != EpochPhase::Execute) {
+    auto extra = extra_vhandle.load();
+    if (extra == nullptr) {
+      // did not exist, allocate
+      auto temp = new ExtraVHandle();
+      auto succ = extra_vhandle.compare_exchange_strong(extra, temp);
+      if (succ)
+        extra = temp;
+      else {
+        delete temp; // somebody else allocated and CASed their ptr first, just use that
+        extra = extra_vhandle.load(); // all to avoid an extra atomic load
+      }
+    }
+    auto version = extra->ReadWithVersion(sid, 0, this);
+    if (!version) {
+      return reinterpret_cast<VarStr *>(extra->last_batch_obj);
+    }
+    return version;
+  }
+  // TODO: Shujian: end of hack
+
   // MVTO: mark row read timestamp
   if (PriorityTxnService::g_row_rts) {
     uint64_t new_rts_64 = sid >> 8;

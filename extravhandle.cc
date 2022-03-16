@@ -9,6 +9,8 @@
 #include <forward_list>
 
 #include "priority.h"
+#include "sid_info.h"
+#include "benchmark/ycsb/ycsb.h"
 
 namespace felis
 {
@@ -20,10 +22,16 @@ DoublyLinkedListExtraVHandle::DoublyLinkedListExtraVHandle()
         : head(nullptr),
           tail(nullptr),
           size(0),
-          last_batch_obj(kIgnoreValue),
+          last_batch_obj((uint64_t) VarStr::New(2000)), // TODO: Shujian Hack
           last_batch_version(0),
           max_exec_sid(0)
 {
+    // TODO: Shujian
+    //  A *serious* hack for allowing priority txn to read empty batch
+    //  by letting it read a useless last_batch_obj.
+    *((uint64_t *)((VarStr *)last_batch_obj)->data()) = 0;
+    // TODO: Shujian: end of hack
+
     this_coreid = alloc_by_regionid = mem::ParallelPool::CurrentAffinity();
 }
 
@@ -248,6 +256,10 @@ VarStr *DoublyLinkedListExtraVHandle::ReadWithVersion(uint64_t sid,
             new_obj_ptr = old_obj_ptr | kReadBitMask;
         }
     }
+    int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+
+    if(core_id == 0)
+        trace(TRACE_IPPT "DispatchService on core {} notifies {}+{} completions");
 
     // wait for the object to be filled
     util::Impl<VHandleSyncService>().WaitForData(obj_ptr_ptr,
@@ -449,6 +461,7 @@ bool DoublyLinkedListExtraVHandle::WriteWithVersion(uint64_t sid, VarStr *obj)
     }
 
     volatile uintptr_t *obj_ptr_ptr = &p->object;
+//    trace(TRACE_DEADLOCK "writing to sid {}", sid_info(sid));
     util::Impl<VHandleSyncService>().OfferData(obj_ptr_ptr, (uintptr_t) obj);
     return true;
 }

@@ -4,6 +4,7 @@
 #include "routine_sched.h"
 #include "pwv_graph.h"
 #include "priority.h"
+#include "sid_info.h"
 
 namespace felis {
 
@@ -790,7 +791,8 @@ int EpochExecutionDispatchService::TraceDependency(uint64_t key)
     }
     for (auto i = 0; i < q.start.load(); i++) {
       if (q.q[i % max_item_percore]->sched_key == key) {
-        printf("found %lu in the consumed pending area of %d\n", key, core_id);
+//        printf("found %lu in the consumed pending area of %d\n", key, core_id);
+        trace(TRACE_DEADLOCK "found {} in the consumed pending area of {}", sid_info(key), core_id);
       }
     }
 

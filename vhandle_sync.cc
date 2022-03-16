@@ -4,6 +4,7 @@
 #include "vhandle.h"
 #include "vhandle_sync.h"
 #include "priority.h"
+#include "sid_info.h"
 
 namespace felis {
 
@@ -139,8 +140,9 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uin
 
     if (unlikely((wait_cnt & 0x7FFFFFF) == 0)) {
       int dep = dispatch.TraceDependency(ver);
-      printf("Deadlock on core %d? %lu (using %p) waiting for %lu (%d) node (%lu), ptr %p\n",
-             core_id, sid, routine, ver, dep, ver & 0xFF, ptr);
+      trace(TRACE_DEADLOCK "Deadlock ver {}, sid {}", sid_info(ver), sid_info(sid));
+//      printf("Deadlock on core %d? %lu (using %p) waiting for %lu (%d) node (%lu), ptr %p\n",
+//             core_id, sid, routine, ver, dep, ver & 0xFF, ptr);
       sleep(600);
     }
 
@@ -202,8 +204,10 @@ void SimpleSync::WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ve
     wait_cnt++;
     if (unlikely((wait_cnt & 0x7FFFFFF) == 0)) {
       int dep = dispatch.TraceDependency(ver);
-      printf("Deadlock on core %d? %lu (using %p) waiting for %lu (%d) node (%lu)\n",
-             core_id, sid, routine, ver, dep, ver & 0xFF);
+      trace(TRACE_DEADLOCK "Deadlock ver {}, sid {}", sid_info(ver), sid_info(sid));
+
+//      printf("Deadlock on core %d? %lu (using %p) waiting for %lu (%d) node (%lu)\n",
+//             core_id, sid, routine, ver, dep, ver & 0xFF);
       sleep(600);
     }
 
