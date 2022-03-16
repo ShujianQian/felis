@@ -21,7 +21,8 @@ DoublyLinkedListExtraVHandle::DoublyLinkedListExtraVHandle()
           tail(nullptr),
           size(0),
           last_batch_obj(kIgnoreValue),
-          last_batch_version(0)
+          last_batch_version(0),
+          max_exec_sid(0)
 {
     this_coreid = alloc_by_regionid = mem::ParallelPool::CurrentAffinity();
 }
@@ -74,6 +75,16 @@ bool DoublyLinkedListExtraVHandle::AppendNewPriorityVersion(uint64_t sid)
         tail = after_tail.prev;
 
         lock.Unlock(&q_node);
+
+        // update max_exec_sid when in execution phase
+        EpochPhase curr_phase = EpochClient::g_workload_client->callback.phase;
+        if (curr_phase == EpochPhase::Execute) {
+            uint64_t old_max_exec_sid;
+            do {
+                old_max_exec_sid = max_exec_sid.load();
+            } while(sid > old_max_exec_sid && !max_exec_sid.compare_exchange_strong(old_max_exec_sid, sid));
+        }
+
         return true;
     } else if (PriorityTxnService::g_hybrid_insert) {
         // hybrid insert
@@ -113,7 +124,18 @@ bool DoublyLinkedListExtraVHandle::AppendNewPriorityVersion(uint64_t sid)
 
                 size++;
                 lock.Unlock(&q_node);
+
+                // update max_exec_sid when in execution phase
+                EpochPhase curr_phase = EpochClient::g_workload_client->callback.phase;
+                if (curr_phase == EpochPhase::Execute) {
+                    uint64_t old_max_exec_sid;
+                    do {
+                        old_max_exec_sid = max_exec_sid.load();
+                    } while(sid > old_max_exec_sid && !max_exec_sid.compare_exchange_strong(old_max_exec_sid, sid));
+                }
+
                 return true;
+
             }
             n->next = nullptr;
             n->prev = old_tail;
@@ -124,6 +146,16 @@ bool DoublyLinkedListExtraVHandle::AppendNewPriorityVersion(uint64_t sid)
         // TODO: Shujian: understand if this size is used, if so why is it not
         //  atomic
         size++;
+
+        // update max_exec_sid when in execution phase
+        EpochPhase curr_phase = EpochClient::g_workload_client->callback.phase;
+        if (curr_phase == EpochPhase::Execute) {
+            uint64_t old_max_exec_sid;
+            do {
+                old_max_exec_sid = max_exec_sid.load();
+            } while(sid > old_max_exec_sid && !max_exec_sid.compare_exchange_strong(old_max_exec_sid, sid));
+        }
+
         return true;
     } else {
         Entry *old_tail;
@@ -147,6 +179,16 @@ bool DoublyLinkedListExtraVHandle::AppendNewPriorityVersion(uint64_t sid)
         // TODO: Shujian: understand if this size is used, if so why is it not
         //  atomic
         size++;
+
+        // update max_exec_sid when in execution phase
+        EpochPhase curr_phase = EpochClient::g_workload_client->callback.phase;
+        if (curr_phase == EpochPhase::Execute) {
+            uint64_t old_max_exec_sid;
+            do {
+                old_max_exec_sid = max_exec_sid.load();
+            } while(sid > old_max_exec_sid && !max_exec_sid.compare_exchange_strong(old_max_exec_sid, sid));
+        }
+
         return true;
     }
 }
@@ -448,15 +490,23 @@ void DoublyLinkedListExtraVHandle::GarbageCollect()
             // TODO: Shujian: should this size operation be atomic?
             size -= num_to_collect;
 
+            if (cur->version >= max_exec_sid) {
+                break;
+            }
+
             ignores_to_collect.clear();
             num_to_collect = 1; // including the new_head that is collected in
             // the next iteration
             cur = cur->next;
         } else {
+            if (cur->version >= max_exec_sid) {
+                break;
+            }
+
             // keep trying to find the first version to keep
             ignores_to_collect.push_front(cur);
             num_to_collect++;
-            abort_if(cur == cur->next, "Fuck: loop in linked list");
+            abort_if(cur == cur->next, "loop in linked list");
             cur = cur->next;
         }
     }
@@ -466,6 +516,10 @@ void DoublyLinkedListExtraVHandle::GarbageCollect()
         head = new_head;
         new_head->prev = nullptr;
     } else {
+
+        // hack delay until at least one non-ignore version is present
+        return;
+
         // no non-ignore version found, collect everything & update head and
         // tail
         for (auto ignore_entry : ignores_to_collect) {

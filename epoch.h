@@ -89,6 +89,7 @@ enum EpochPhase : int {
 class EpochCallback {
   friend class EpochClient;
   friend class CallTxnsWorker;
+  friend class DoublyLinkedListExtraVHandle;
   PerfLog perf;
   EpochClient *client;
   const char *label;
@@ -173,6 +174,7 @@ class EpochClient {
  protected:
   friend class BaseTxn;
   friend class EpochCallback;
+  friend class DoublyLinkedListExtraVHandle;
 
   void InitializeEpoch();
   void ExecuteEpoch();

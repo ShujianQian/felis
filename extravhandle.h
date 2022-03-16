@@ -81,6 +81,7 @@ class DoublyLinkedListExtraVHandle
     std::atomic<Entry *> tail;
     uint64_t last_batch_version;
     uintptr_t last_batch_obj;
+    std::atomic<uint64_t> max_exec_sid;
 
   public:
     static mem::ParallelSlabPool pool;
