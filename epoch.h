@@ -33,27 +33,51 @@ class EpochControl : public go::Routine {
 
 using TxnMemberFunc = void (BaseTxn::*)();
 
+/**
+ * This class is reused every epoch.
+ */
 class EpochClientBaseWorker : public go::Routine {
  protected:
   int t;
   int nr_threads;
   EpochClient *client;
+  /**
+   * Used to say whether issuing transactions are finished?
+   * Used to say whether the work is done?
+   */
   std::atomic_bool finished;
+//  std::atomic_bool cutoff;
  public:
   EpochClientBaseWorker(int t, EpochClient *client)
-      : t(t), nr_threads(NodeConfiguration::g_nr_threads), client(client), finished(true) {
+      : t(t), nr_threads(NodeConfiguration::g_nr_threads), client(client), finished(true)/*,
+        cutoff(false)*/{
     set_reuse(true); // so that OnFinish() is invoked.
   }
+  /**
+   * Need CAS here because at this point, may be still performing ExecutionRoutine reading finished value.
+   * This variable is weird: On
+   * Barrier: Someone needs to make finished =true before it will continue!
+   */
   void Reset() {
     bool old = true;
     while (!finished.compare_exchange_strong(old, false)) {
       old = true;
       _mm_pause();
     }
+    /*bool cutoff_old = false;
+    while (!cutoff.compare_exchange_strong(cutoff_old, true)) {
+      cutoff_old = false;
+      _mm_pause();
+    }*/
     go::Routine::Reset();
   }
-  void OnFinish() override final { finished = true; }
+  /**
+   * Since reused per epoch, need to set finish = true?
+   * Though it should be already true?
+   */
+  void OnFinish() override final { finished = true; /*cutoff = false;*/}
   bool has_finished() const { return finished.load(); }
+//  bool should_cutoff() const { return cutoff.load(); }
 };
 
 class CallTxnsWorker : public EpochClientBaseWorker {
@@ -104,8 +128,9 @@ class EpochCallback {
 struct EpochTxnSet {
   struct TxnSet {
     size_t nr;
+    uint64_t completed_txns;/* Change this to array of 3 for each epoch*/
     BaseTxn *txns[];
-    TxnSet(size_t nr) : nr(nr) {}
+    TxnSet(size_t nr) : nr(nr), completed_txns(0){}
   };
   std::array<TxnSet *, NodeConfiguration::kMaxNrThreads> per_core_txns;
   EpochTxnSet();

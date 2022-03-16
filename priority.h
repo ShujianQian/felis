@@ -10,6 +10,16 @@ namespace felis {
 
 class PriorityTxn;
 
+struct PriorityTxnServiceStatistics {
+    PriorityTxnServiceStatistics():
+    eppt_executed({}), ippt_executed({}),
+    eppt_skipped({}), ippt_skipped({}) {}
+    std::array<int, NodeConfiguration::kMaxNrThreads> eppt_executed;
+    std::array<int, NodeConfiguration::kMaxNrThreads> ippt_executed;
+    std::array<int, NodeConfiguration::kMaxNrThreads> eppt_skipped;
+    std::array<int, NodeConfiguration::kMaxNrThreads> ippt_skipped;
+};
+
 class PriorityTxnService {
   friend class PriorityTxn;
   // per-core progress, the maximum piece sid each core has started executing
@@ -19,6 +29,7 @@ class PriorityTxnService {
   std::atomic_ulong epoch_nr;
   uint64_t global_last_sid;
   util::SpinLock lock; // for global_last_sid
+    std::atomic_uint ECE496Sequence;
 
  public:
   class Bitmap {
@@ -53,6 +64,7 @@ class PriorityTxnService {
     }
   };
   std::array<Bitmap*, NodeConfiguration::kMaxNrThreads> seq_bitmap;
+  uint64_t ECE496FetchAddSequence();
 
   int idx2seq(int idx, int core_id)
   {
@@ -146,10 +158,12 @@ class PriorityTxnService {
   uint64_t GetNextSIDSlot(uint64_t sequence);
 
  public:
-  static void PrintStats();
+   void PrintStats();
   static unsigned long long g_tsc;
   static int execute_piece_time;
 
+
+  PriorityTxnServiceStatistics priorityTxnServiceStatistics;
  private:
   class PieceCounter {
     std::atomic_long cnt;
@@ -324,6 +338,7 @@ class PriorityTxn {
   }
 
   bool Init(VHandle **update_handles, int usize, BaseInsertKey **insert_ikeys, int isize, VHandle **insert_handles);
+    void ECE496_Debug_Init();
 
   void Rollback(VHandle **update_handles, int update_cnt, int usize, VHandle **insert_handles, int insert_cnt);
 

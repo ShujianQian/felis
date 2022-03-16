@@ -52,6 +52,16 @@ StockTxnInput ClientBase::GenerateTransactionInput<StockTxnInput>()
   return in;
 }
 
+template <>
+ECE496Input ClientBase::GenerateTransactionInput<ECE496Input>()
+{
+    ECE496Input in;
+    in.warehouse_id = PickWarehouse();
+    if (PriorityTxnService::g_tpcc_pin && nr_warehouses() == NodeConfiguration::g_nr_threads)
+        in.warehouse_id = go::Scheduler::CurrentThreadPoolId();
+    return in;
+}
+
 std::string format_sid(uint64_t sid)
 {
   return "node_id " + std::to_string(sid & 0x000000FF) +
@@ -59,7 +69,27 @@ std::string format_sid(uint64_t sid)
          ", txn sequence " + std::to_string(sid >> 8 & 0xFFFFFF);
 }
 bool ECE496_Run(PriorityTxn *txn){
-  return true;
+    // generate txn input
+    ECE496Input input = dynamic_cast<tpcc::Client*>
+    (EpochClient::g_workload_client)->GenerateTransactionInput<ECE496Input>();
+    struct Context {
+        uint warehouse_id;
+        PriorityTxn *txn;
+    };
+    auto lambda =
+            [](std::tuple<Context> capture) {
+                auto [ctx] = capture;
+//                logger->info("ECE496_Run {}", ctx.warehouse_id);
+            };
+    Context ctx {input.warehouse_id, txn};
+    int core_id = -1;
+    if (PriorityTxnService::g_tpcc_pin && g_tpcc_config.IsWarehousePinnable())
+        core_id = g_tpcc_config.WarehouseToCoreId(input.warehouse_id);
+    // although it should still be issued to local
+    txn->ECE496_Debug_Init();
+    txn->IssuePromise(ctx, lambda, core_id);
+
+    return txn->Commit();
 }
 
 bool StockTxn_Run(PriorityTxn *txn)

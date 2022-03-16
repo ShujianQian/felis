@@ -10,7 +10,7 @@ void GeneratePriorityTxn() {
   int txn_per_epoch = PriorityTxnService::g_nr_priority_txn;
   for (auto i = 1; i < EpochClient::g_max_epoch; ++i) {
     for (auto j = 1; j <= txn_per_epoch; ++j) {
-      PriorityTxn txn(&MWTxn_Run);
+      PriorityTxn txn(&ECE496_Run);
       txn.epoch = i;
       auto interval = PriorityTxnService::g_interval_priority_txn;
       txn.delay = static_cast<uint64_t>(static_cast<double>(interval * j) * 2.2);
@@ -19,6 +19,14 @@ void GeneratePriorityTxn() {
   }
   logger->info("[Pri-init] pri txns pre-generated, {} per epoch", txn_per_epoch);
 }
+
+    template <>
+    ECE496Input Client::GenerateTransactionInput<ECE496Input>()
+    {
+        ECE496Input in;
+        in.warehouse_id = rand.next() % g_table_size;
+        return in;
+    }
 
 template <>
 MWTxnInput Client::GenerateTransactionInput<MWTxnInput>()
@@ -43,7 +51,29 @@ std::string format_sid(uint64_t sid)
          ", epoch " + std::to_string(sid >> 32) +
          ", txn sequence " + std::to_string(sid >> 8 & 0xFFFFFF);
 }
+    bool ECE496_Run(PriorityTxn *txn){
+        // generate txn input
+        ECE496Input input = dynamic_cast<ycsb::Client*>
+        (EpochClient::g_workload_client)->GenerateTransactionInput<ECE496Input>();
+        struct Context {
+            uint warehouse_id;
+            PriorityTxn *txn;
+        };
+        auto lambda =
+                [](std::tuple<Context> capture) {
+                    auto [ctx] = capture;
+//                    logger->info("ECE496_Run {}", ctx.warehouse_id);
+                };
+        Context ctx {input.warehouse_id, txn};
+//        int core_id = -1;
+//        if (PriorityTxnService::g_tpcc_pin && g_tpcc_config.IsWarehousePinnable())
+//            core_id = g_tpcc_config.WarehouseToCoreId(input.warehouse_id);
+        // although it should still be issued to local
+        txn->ECE496_Debug_Init();
+        txn->IssuePromise(ctx, lambda);
 
+        return txn->Commit();
+    }
 bool MWTxn_Run(PriorityTxn *txn)
 {
   // record pri txn init queue time

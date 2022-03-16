@@ -240,8 +240,15 @@ void AllocStateTxnWorker::Run()
   client->commit_buffer->Clear(t);
 }
 
+/**
+ * Different from ExecutionRoutine because this only gets ran once per core ever.
+ * It won't spawn multiple per each core. In this case do we need cutoff?
+ *
+ * Next step could be to make it act like that.
+ */
 void CallTxnsWorker::initialization_phase_run()
 {
+//    logger->info("initialization_phase_run Core {}", t);
   auto nr_nodes = client->conf.nr_nodes();
   auto batch_cnt = client->per_core_cnts[t];
   auto batch_cnt_len = nr_nodes * nr_nodes * PromiseRoutineTransportService::kPromiseMaxLevels;
@@ -249,6 +256,7 @@ void CallTxnsWorker::initialization_phase_run()
 
   set_urgent(true);
   auto batch_txn_set = client->cur_txns.load()->per_core_txns[t];
+  int batch_length = batch_txn_set->nr;
 
   while (AllocStateTxnWorker::comp.load() != 0) _mm_pause();
   
@@ -285,29 +293,49 @@ void CallTxnsWorker::initialization_phase_run()
   PriorityTxn *txn;
   BaseTxn* batch_txn;
   int batch_txn_cnt = 0;
-
+//  assert(batch_txn_cnt == batch_txn_set->completed_txns);
+  bool has_completed_else_gc = false;
   bool done = false;
+  /**
+   * Question: What behavior are we trying to go for?
+   * If encounter that no more priority transactions in interval for first time & done all batch, then exit?
+   * Or continuing spinning until one core decides to kick everyone off in CallTxns?
+   * I believe for EPPT it is #2 because Peek will not give anymore transactions once batch is done
+   */
   do {
     if (svc.Peek(core_id, should_pop_pri)) {
       auto rt = next_r;
-
-      util::Instance<PriorityTxnService>().UpdateProgress(core_id, rt->sched_key);
+//      if(core_id == 0){
+//          logger->info("ECE496 Core {} A", core_id);
+//      }
+        util::Instance<PriorityTxnService>().UpdateProgress(core_id, rt->sched_key);
       rt->callback(rt);
       svc.Complete(core_id, PromiseRoutineDispatchService::CompleteType::PriorityPiece);
       continue;
     }
 
-    if (svc.Peek(core_id, txn)) {
+    if (svc.IPPT_Peek(core_id, txn, false, batch_length - batch_txn_cnt)) {
       txn->Run();
-      svc.Complete(core_id, PromiseRoutineDispatchService::CompleteType::PriorityInit);
+        util::Instance<PriorityTxnService>().priorityTxnServiceStatistics.ippt_executed[core_id]++;
+//        if(core_id== 0){
+//            logger->info("ECE496 Core {} B", core_id);
+//        }
+        svc.Complete(core_id, PromiseRoutineDispatchService::CompleteType::PriorityInit);
       continue;
     }
     // logger->info("Core {} Phase {}", t, client->callback.phase);
-    if (batch_txn_cnt < batch_txn_set->nr) {
+    /**
+     * Can multiple threads be here? No because the scheduler is not running threads concurrently.
+     * Could it be done multiple times? Yes for EPPT not here.
+     */
+    if (batch_txn_cnt < batch_length) {
       batch_txn = batch_txn_set->txns[batch_txn_cnt];
-      batch_txn_cnt++;
-      
-      cnt++;
+        batch_txn_cnt++;
+//      if(core_id == 0){
+//          logger->info("ECE496 Core {} C SID {}", core_id, batch_txn->serial_id());
+//      }
+
+        cnt++;
       if ((cnt & 0x01F) == 0) {
         transport.PeriodicIO(core_id);
       } // Periodic flush
@@ -319,80 +347,87 @@ void CallTxnsWorker::initialization_phase_run()
       // svc.Complete(core_id);
       continue;
     } else {
-      bool node_finished = client->conf.FlushBufferPlan(client->per_core_cnts[t]);
+        if(!has_completed_else_gc){
+            has_completed_else_gc = true;
+            bool node_finished = client->conf.FlushBufferPlan(client->per_core_cnts[t]);
 
-      // Try to assign a default partition scheme if nothing has been
-      // assigned. Because transactions are already round-robinned, there is no
-      // imbalanced here.
+            // Try to assign a default partition scheme if nothing has been
+            // assigned. Because transactions are already round-robinned, there is no
+            // imbalanced here.
 
-      // These are used for corescaling, I think they are deprecated.
-      long extra_offset = 0;
-      for (auto i = client->core_limit; i < t; i++) {
-        extra_offset += client->cur_txns.load()->per_core_txns[i]->nr;
-      }
-      extra_offset %= client->core_limit;
+            // These are used for corescaling, I think they are deprecated.
+            long extra_offset = 0;
+            for (auto i = client->core_limit; i < t; i++) {
+                extra_offset += client->cur_txns.load()->per_core_txns[i]->nr;
+            }
+            extra_offset %= client->core_limit;
 
-      auto &transport = util::Impl<PromiseRoutineTransportService>();
-      for (size_t i = 0; i < batch_txn_set->nr; i++) {
-        auto txn = batch_txn_set->txns[i];
-        auto aff = t;
+            auto &transport = util::Impl<PromiseRoutineTransportService>();
+            for (size_t i = 0; i < batch_txn_set->nr; i++) {
+                auto txn = batch_txn_set->txns[i];
+                auto aff = t;
 
-        if (client->callback.phase == EpochPhase::Execute
-            && t >= client->core_limit) {
-          // auto avail_nr_zones = client->core_limit / mem::kNrCorePerNode;
-          // auto zone = t % avail_nr_zones;
-          aff = (i + extra_offset) % client->core_limit;
+                if (client->callback.phase == EpochPhase::Execute
+                    && t >= client->core_limit) {
+                    // auto avail_nr_zones = client->core_limit / mem::kNrCorePerNode;
+                    // auto zone = t % avail_nr_zones;
+                    aff = (i + extra_offset) % client->core_limit;
+                }
+
+                auto root = txn->root_promise();
+                root->AssignAffinity(aff);
+                root->Complete();
+
+                // Doesn't seems to work that well, but just in case it works well for some
+                // workloads. For example, issuing takes a longer time.
+                if ((i & 0xFF) == 0) transport.PrefetchInbound();
+            }
+            set_urgent(false);
+
+            // Here we set the finished flag a bit earlier, so that FinishCompletion()
+            // could create the ExecutionRoutine a bit earlier.
+            finished = true;
+            transport.FinishCompletion(0);
+
+            // Granola doesn't support out of order scheduling. In the original paper,
+            // Granola uses a single thread to issue. We use multiple threads, so here we
+            // have to barrier.
+            if ((EpochClient::g_enable_granola || EpochClient::g_enable_pwv) && client->callback.phase == EpochPhase::Execute) {
+                g_finished.fetch_add(1);
+
+                while (EpochClient::g_enable_granola && g_finished.load() != NodeConfiguration::g_nr_threads)
+                    _mm_pause();
+            }
+
+            if (client->callback.phase == EpochPhase::Execute) {
+                VHandle::Quiescence();
+                RowEntity::Quiescence();
+
+                mem::GetDataRegion().Quiescence();
+            } else if (client->callback.phase == EpochPhase::Initialize) {
+            } else if (client->callback.phase == EpochPhase::Insert) {
+                util::Instance<GC>().RunGC();
+            }
+
+            trace(TRACE_COMPLETION "complete issueing and flushing network {}", node_finished);
+
+            client->completion.Complete();
+            if (node_finished) {
+                client->completion.Complete();
+            }
         }
-
-        auto root = txn->root_promise();
-        root->AssignAffinity(aff);
-        root->Complete();
-
-        // Doesn't seems to work that well, but just in case it works well for some
-        // workloads. For example, issuing takes a longer time.
-        if ((i & 0xFF) == 0) transport.PrefetchInbound();
-      }
-      set_urgent(false);
-
-      // Here we set the finished flag a bit earlier, so that FinishCompletion()
-      // could create the ExecutionRoutine a bit earlier.
-      finished = true;
-      transport.FinishCompletion(0);
-      
-      // Granola doesn't support out of order scheduling. In the original paper,
-      // Granola uses a single thread to issue. We use multiple threads, so here we
-      // have to barrier.
-      if ((EpochClient::g_enable_granola || EpochClient::g_enable_pwv) && client->callback.phase == EpochPhase::Execute) {
-        g_finished.fetch_add(1);
-
-        while (EpochClient::g_enable_granola && g_finished.load() != NodeConfiguration::g_nr_threads)
-          _mm_pause();
-      }
-
-      if (client->callback.phase == EpochPhase::Execute) {
-        VHandle::Quiescence();
-        RowEntity::Quiescence();
-
-        mem::GetDataRegion().Quiescence();
-      } else if (client->callback.phase == EpochPhase::Initialize) {
-      } else if (client->callback.phase == EpochPhase::Insert) {
-        util::Instance<GC>().RunGC();
-      }
-
-      trace(TRACE_COMPLETION "complete issueing and flushing network {}", node_finished);
-
-      client->completion.Complete();
-      if (node_finished) {
-        client->completion.Complete();
-      }
     }
 
-    if (!svc.IsReady(core_id))
-      done = true; // piece issuing on this core has not finished, quit
-    else if (!transport.PeriodicIO(core_id))
+    /*Removed unless having multiple threads per core
+     *
+     * if (svc.ShouldCutoff(core_id)) {
+        done = true; // piece issuing on this core has not finished, quit
+        logger->info("Cut off core {}", core_id);
+    }
+    else */if (!transport.PeriodicIO(core_id))
       done = true; // did not receive new piece from network
   } while (!done);
-  logger->info( "Coroutine Exit on core {}", core_id);
+//  logger->info( "Coroutine Exit on core {}", core_id);
 
   trace(TRACE_EXEC_ROUTINE "Coroutine Exit on core {}", core_id);
 }
@@ -488,7 +523,8 @@ void CallTxnsWorker::Run()
 {
   if(client->callback.phase == EpochPhase::Execute){
     execution_phase_run();
-  }else{ 
+  }else{
+//    cutoff = false;
     initialization_phase_run();
   }
 }
@@ -515,6 +551,10 @@ void EpochClient::CallTxns(uint64_t epoch_nr, TxnMemberFunc func, const char *la
 
   // The order here is very very important. First, we reset all issue
   // workers. After this step, the scheduler's IsReady() would return false.
+  /**
+   * Even if the scheduler had queued up to spawn another ExecutionRoutine,
+   * by setting IsReady() to false, it ensures that it will not be ran, or do anything significant
+   */
   for (auto t = 0; t < nr_threads; t++) {
     auto r = &workers[t]->call_worker;
     r->Reset();
@@ -523,6 +563,12 @@ void EpochClient::CallTxns(uint64_t epoch_nr, TxnMemberFunc func, const char *la
 
   // Second, we kick everyone out if they are inside the scheduler (Peek()
   // function), and reset the scheduler queue.
+  /**
+   * How this works is that it is emptying the waiting, pending, hashtable queues in
+   * the scheduler pieces. It's allowed to do this because without interfering with others
+   * because others have been kicked out due to last condition.
+   * I believe kick out occurs from last condition.
+   */
   util::Impl<PromiseRoutineDispatchService>().Reset();
 
   // Third, We can now absorb pieces from the network. Notice if any
@@ -532,7 +578,6 @@ void EpochClient::CallTxns(uint64_t epoch_nr, TxnMemberFunc func, const char *la
 
   // Last, let's start issuing txns.
   for (auto t = 0; t < nr_threads; t++) {
-    logger->info("Executing core {} Phase {}", t, callback.phase);
     auto r = &workers[t]->call_worker;
     go::GetSchedulerFromPool(t + 1)->WakeUp(r);
   }
@@ -697,7 +742,7 @@ void EpochClient::OnExecuteComplete()
       logger->info("PriorityTxnService::execute_piece_time {} ms", PriorityTxnService::execute_piece_time);
     mem::PrintMemStats();
     mem::GetDataRegion().PrintUsageEachClass();
-    PriorityTxnService::PrintStats();
+      util::Instance<PriorityTxnService>().PrintStats();
 
     if (Options::kOutputDir) {
       json11::Json::object result {

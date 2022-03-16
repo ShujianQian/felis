@@ -235,12 +235,15 @@ void BasePieceCollection::ExecutionRoutine::Run()
 
   unsigned long cnt = 0x01F;
   PriorityTxn *txn;
+//    logger->info("ExecutionRoutine Core {}", core_id);
 
   bool done = false;
   do {
     if (svc.Peek(core_id, should_pop_pri)) {
       auto rt = next_r;
-
+//        if(core_id == 0){
+//            logger->info("ECE496 Core {} D", core_id);
+//        }
       util::Instance<PriorityTxnService>().UpdateProgress(core_id, rt->sched_key);
       rt->callback(rt);
       svc.Complete(core_id, PromiseRoutineDispatchService::CompleteType::PriorityPiece);
@@ -248,7 +251,12 @@ void BasePieceCollection::ExecutionRoutine::Run()
     }
 
     if (svc.Peek(core_id, txn)) {
-      txn->Run();
+//        if(core_id == 0){
+//            logger->info("ECE496 Core {} E", core_id);
+//
+//        }
+        util::Instance<PriorityTxnService>().priorityTxnServiceStatistics.eppt_executed[core_id]++;
+        txn->Run();
       svc.Complete(core_id, PromiseRoutineDispatchService::CompleteType::PriorityInit);
       continue;
     }
@@ -260,6 +268,9 @@ void BasePieceCollection::ExecutionRoutine::Run()
       } // Periodic flush
 
       auto rt = next_r;
+//        if(core_id == 0){
+//            logger->info("ECE496 Core {} F SID {}", core_id, rt->sched_key);
+//        }
       if (rt->sched_key != 0)
         debug(TRACE_EXEC_ROUTINE "Run {} sid {}", (void *) rt, rt->sched_key);
 

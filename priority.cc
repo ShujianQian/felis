@@ -368,6 +368,18 @@ void PriorityTxnService::PrintStats() {
 
   logger->info("[Pri-init] FastestCore {}, PriorityPreempt {}, TpccPin {}",
                g_fastest_core, g_priority_preemption, g_tpcc_pin);
+    for(int i = 0; i < NodeConfiguration::g_nr_threads;i++){
+        logger->info("EPPT Executed: {} core {}", priorityTxnServiceStatistics.eppt_executed[i], i);
+    }
+    for(int i = 0; i < NodeConfiguration::g_nr_threads;i++){
+        logger->info("IPPT Executed: {} core {}", priorityTxnServiceStatistics.ippt_executed[i], i);
+    }
+    for(int i = 0; i < NodeConfiguration::g_nr_threads;i++){
+        logger->info("EPPT Skipped: {} core {}", priorityTxnServiceStatistics.eppt_skipped[i], i);
+    }
+    for(int i = 0; i < NodeConfiguration::g_nr_threads;i++){
+        logger->info("IPPT Skipped: {} core {}", priorityTxnServiceStatistics.ippt_skipped[i], i);
+    }
 }
 
 uint64_t seq2sid(uint64_t sequence)
@@ -643,6 +655,15 @@ bool PriorityTxn::Init(VHandle **update_handles, int usize, BaseInsertKey **inse
   return true;
 }
 
+void PriorityTxn::ECE496_Debug_Init(){
+    auto epoch = util::Instance<EpochManager>().current_epoch_nr();
+    auto node_id = util::Instance<NodeConfiguration>().node_id();
+    sid = (epoch << 32) | (util::Instance<PriorityTxnService>().ECE496FetchAddSequence() << 8) | node_id;
+  this->initialized = true;
+}
+uint64_t PriorityTxnService::ECE496FetchAddSequence(){
+    return this->ECE496Sequence.fetch_add(1);
+}
 // return TRUE if update's initialization has conflict with batched txns
 bool PriorityTxn::CheckUpdateConflict(VHandle* handle) {
   bool passed = util::Instance<PriorityTxnService>().MaxProgressPassed(this->sid);

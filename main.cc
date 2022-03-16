@@ -68,8 +68,9 @@ int main(int argc, char *argv[])
 
   NodeConfiguration::g_nr_threads = Options::kCpu.ToInt("4");
   NodeConfiguration::g_data_migration = Options::kDataMigration;
-  if (Options::kEpochSize)
-    EpochClient::g_txn_per_epoch = Options::kEpochSize.ToInt();
+  if (Options::kEpochSize) {
+      EpochClient::g_txn_per_epoch = Options::kEpochSize.ToInt();
+  }
 
   Module<CoreModule>::ShowAllModules();
   Module<WorkloadModule>::ShowAllModules();

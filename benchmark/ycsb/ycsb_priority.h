@@ -15,11 +15,18 @@ struct MWTxnInput {
   int nr;
   uint64_t keys[kMaxRowUpdates];
 };
+    struct ECE496Input {
+        uint warehouse_id;
+    };
+
+    template <>
+    ECE496Input Client::GenerateTransactionInput<ECE496Input>();
 
 template <>
 MWTxnInput Client::GenerateTransactionInput<MWTxnInput>();
 
-bool MWTxn_Run(felis::PriorityTxn *txn);
+    bool MWTxn_Run(felis::PriorityTxn *txn);
+    bool ECE496_Run(felis::PriorityTxn *txn);
 
 }
 

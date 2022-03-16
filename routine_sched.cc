@@ -451,6 +451,8 @@ EpochExecutionDispatchService::AddToPriorityQueue(
   node->Initialize();
   node->routine = rt;
   node->state = state;
+//  if()
+//  logger->info("496 sched_key {} ", rt->sched_key );
   auto key = rt->sched_key;
 
   // HashHeader stores all the HashEntry with the same key>>8.
@@ -529,7 +531,10 @@ EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_po
   auto &state = queues[core_id]->state;
 
   state.running = State::kDeciding;
-  if (util::Instance<EpochManager>().current_phase() == EpochPhase::Execute && !IsReady(core_id)) {
+  EpochPhase phase = util::Instance<EpochManager>().current_phase();
+  if (phase == EpochPhase::Execute && !IsReady(core_id)/*||
+      ((phase == EpochPhase::Initialize || phase == EpochPhase::Insert) && ShouldCutoff(core_id))*/)
+  {
     state.running = State::kSleeping;
     return false;
   }
@@ -596,10 +601,83 @@ EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_po
           core_id, n, nr_bubbles);
     comp->Complete(n + nr_bubbles);
   }
+    if (phase == EpochPhase::Execute){
+        this->ProcessBatchCounter(core_id);
 
-  this->ProcessBatchCounter(core_id);
+    }
   return false;
 }
+
+bool EpochExecutionDispatchService::IPPT_Peek(int core_id, PriorityTxn *&txn, bool dry_run, int batch_txn_remaining)
+{
+        if (!NodeConfiguration::g_priority_txn)
+            return false;
+
+        /**
+         * Should allow batch initialization to occur concurrently.
+         * However, if determined that the phase/epoch is ending, then will end execution
+         * During initialization, ShouldCutoff = false, IsReady=(first false) true;
+         * Signal End of Initialization Phase, ShouldCutoff = true, IsReady=false;
+         */
+        /*if(ShouldCutoff(core_id)) {
+            return false;
+        }*/
+
+        // hack 2: if on this core, no batched pieces of this epoch has ever been run
+        // (which leads to prog not being updated), don't run
+        // No one is interested in batch progress during initialization phase
+        /*uint64_t prog = util::Instance<PriorityTxnService>().GetProgress(core_id);
+        if (prog >> 32 != util::Instance<EpochManager>().current_epoch_nr())
+            return false;*/
+
+        // hack 3: make sure pq doesn't get run after this core has no piece to run
+        if (batch_txn_remaining == 0)
+            return false;
+        /*
+        if (queues[core_id]->pq.sched_pol->len == 0)
+            return false;
+        this->ProcessBatchCounter(core_id);
+
+        if (util::Instance<PriorityTxnService>().BatchPcCnt[core_id]->Get() == 0)
+            return false;
+        */
+
+        auto &tq = queues[core_id]->tq;
+        auto tstart = tq.start.load(std::memory_order_acquire);
+        if (tstart < tq.end.load(std::memory_order_acquire)) {
+            PriorityTxn *candidate = tq.q + tstart;
+            auto epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
+            if (candidate->epoch != epoch_nr) {
+
+                // hack 4: if a priority txn is from a previous epoch, skip it
+                if (candidate->epoch < epoch_nr) {
+                    auto from = tstart;
+                    while (tstart < tq.end.load(std::memory_order_acquire) && candidate->epoch < epoch_nr)
+                        candidate = tq.q + ++tstart;
+                    tq.start.store(tstart, std::memory_order_release);
+                    util::Instance<PriorityTxnService>().
+                            priorityTxnServiceStatistics.ippt_skipped[core_id]+= tstart - from;
+
+
+                    // trace(TRACE_PRIORITY "core {} SKIPPED from pos {} ({}) to pos {} ({})", core_id, from, from * 32 + core_id + 1, tstart, tstart * 32 + core_id + 1);
+                }
+
+                return false;
+            }
+
+            if (__rdtsc() - PriorityTxnService::g_tsc < candidate->delay)
+                return false;
+            if (!dry_run) {
+                tq.start.store(tstart + 1, std::memory_order_release);
+                txn = candidate;
+                EpochClient::g_workload_client->completion_object()->Increment(1);
+            }
+
+            // trace(TRACE_PRIORITY "core {} peeked on pos {} (pri id {}), txn {:p}", core_id, tstart, tstart * 32 + core_id + 1, (void*)txn);
+            return true;
+        }
+        return false;
+    }
 
 bool EpochExecutionDispatchService::Peek(int core_id, PriorityTxn *&txn, bool dry_run)
 {
@@ -620,6 +698,10 @@ bool EpochExecutionDispatchService::Peek(int core_id, PriorityTxn *&txn, bool dr
     return false;
 
   // hack 3: make sure pq doesn't get run after this core has no piece to run
+  /**
+   * Shortly after, the ExecutionRoutine will finish since the batch pieces have finished.
+   * Don't want to wait for more priority transactions because who knows when they'll come
+   */
   if (queues[core_id]->pq.sched_pol->len == 0)
     return false;
   this->ProcessBatchCounter(core_id);
@@ -632,19 +714,25 @@ bool EpochExecutionDispatchService::Peek(int core_id, PriorityTxn *&txn, bool dr
     PriorityTxn *candidate = tq.q + tstart;
     auto epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
     if (candidate->epoch != epoch_nr) {
-
       // hack 4: if a priority txn is from a previous epoch, skip it
       if (candidate->epoch < epoch_nr) {
         auto from = tstart;
         while (tstart < tq.end.load(std::memory_order_acquire) && candidate->epoch < epoch_nr)
           candidate = tq.q + ++tstart;
         tq.start.store(tstart, std::memory_order_release);
+      util::Instance<PriorityTxnService>().
+              priorityTxnServiceStatistics.eppt_skipped[core_id]+= tstart - from;
         // trace(TRACE_PRIORITY "core {} SKIPPED from pos {} ({}) to pos {} ({})", core_id, from, from * 32 + core_id + 1, tstart, tstart * 32 + core_id + 1);
       }
 
       return false;
     }
-
+    /**
+     * Priority transactions have a delay where they will not be ran for a certain amount of time.
+     * This makes it so that it's possible for hack 4 to occur, ie if all batch pieces are finished,
+     * then the remaining priority transactions whose interval has not arrived yet will be skipped and
+     * supposedly ran next epoch (though in actuality is skipped).
+     */
     if (__rdtsc() - PriorityTxnService::g_tsc < candidate->delay)
       return false;
     if (!dry_run) {
@@ -760,4 +848,8 @@ bool EpochExecutionDispatchService::IsReady(int core_id)
   return EpochClient::g_workload_client->get_worker(core_id)->call_worker.has_finished();
 }
 
+//bool EpochExecutionDispatchService::ShouldCutoff(int core_id)
+//{
+//    return EpochClient::g_workload_client->get_worker(core_id)->call_worker.should_cutoff();
+//}
 }

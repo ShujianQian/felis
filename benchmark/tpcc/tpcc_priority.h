@@ -21,6 +21,13 @@ struct StockTxnInput {
   } detail;
 };
 
+struct ECE496Input {
+    uint warehouse_id;
+};
+
+template <>
+ECE496Input ClientBase::GenerateTransactionInput<ECE496Input>();
+
 template <>
 StockTxnInput ClientBase::GenerateTransactionInput<StockTxnInput>();
 

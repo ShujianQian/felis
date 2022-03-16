@@ -144,6 +144,8 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   void ProcessBatchCounter(int core_id);
   bool Peek(int core_id, DispatchPeekListener &should_pop) final override;
   bool Peek(int core_id, PriorityTxn *&txn, bool dry_run = false) final override;
+  bool IPPT_Peek(int core_id, PriorityTxn *&txn, bool dry_run, int batch_txn_remaining) final override;
+
   bool Preempt(int core_id, BasePieceCollection::ExecutionRoutine *state) final override;
   void Reset() final override;
   void Complete(int core_id, CompleteType type = BatchPiece) final override;
@@ -156,6 +158,8 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
     return running == State::kRunning;
   }
   bool IsReady(int core_id) final override;
+//  bool ShouldCutoff(int core_id) final override;
+
 };
 
 }
