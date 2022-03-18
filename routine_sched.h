@@ -144,6 +144,7 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   void ProcessBatchCounter(int core_id);
   bool Peek(int core_id, DispatchPeekListener &should_pop) final override;
   bool Peek(int core_id, PriorityTxn *&txn, bool dry_run = false) final override;
+  bool Peek_IPPT(int core_id, PriorityTxn *&txn, int batch_txn_remaining, bool dry_run = false) final override;
   bool Preempt(int core_id, BasePieceCollection::ExecutionRoutine *state) final override;
   void Reset() final override;
   void Complete(int core_id, CompleteType type = BatchPiece) final override;

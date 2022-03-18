@@ -153,11 +153,13 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uin
     }
 
     if ((wait_cnt & 0x00FF) == 0) {
-      if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt()) {
-        // logger->info("Preempt back");
-        // Broken???
-        return true;
-      }
+        // FIXME: Shujian: Currently disable preemption due to initialization_phase_run issue
+//        logger->critical("Preempt1 back");
+//      if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt()) {
+//        // logger->info("Preempt back");
+//        // Broken???
+//        return true;
+//      }
     }
 
     if (slot(core_id)->done.load(std::memory_order_acquire))
@@ -215,11 +217,13 @@ void SimpleSync::WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ve
       transport.PeriodicIO(core_id);
     }
 
-    if ((wait_cnt & 0x00FF) == 0) {
-      if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt()) {
-        continue;
-      }
-    }
+      // FIXME: Shujian: Currently disable preemption due to initialization_phase_run issue
+//    if ((wait_cnt & 0x00FF) == 0) {
+//        logger->critical("Preempt2 back");
+//      if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt()) {
+//        continue;
+//      }
+//    }
 
     if (!IsPendingVal(*addr))
       break;

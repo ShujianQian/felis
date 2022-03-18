@@ -292,7 +292,8 @@ void CallTxnsWorker::initialization_phase_run()
     unsigned long cnt = 0x01F;
     PriorityTxn *txn;
     BaseTxn *batch_txn;
-    int batch_txn_cnt = 0;
+    size_t batch_txn_cnt = 0;
+    const size_t batch_length = batch_txn_set->nr;
 
     bool done = false;
     do {
@@ -313,7 +314,7 @@ void CallTxnsWorker::initialization_phase_run()
             continue;
         }
 
-        if (svc.Peek(core_id, txn)) {
+        if (svc.Peek_IPPT(core_id, txn, (int) (batch_length - batch_txn_cnt), false)) {
             if (core_id == 0) {
                 trace(TRACE_IPPT "Should pop txn");
             }
@@ -384,7 +385,9 @@ void CallTxnsWorker::initialization_phase_run()
             // Here we set the finished flag a bit earlier, so that FinishCompletion()
             // could create the ExecutionRoutine a bit earlier.
             finished = true;
-            transport.FinishCompletion(0);
+
+            // TODO: Shujian: removed finish completion because it could spawn ExecutionRoutine
+//            transport.FinishCompletion(0);
 
             // Granola doesn't support out of order scheduling. In the original paper,
             // Granola uses a single thread to issue. We use multiple threads, so here we
@@ -418,9 +421,10 @@ void CallTxnsWorker::initialization_phase_run()
             }
         }
 
-        if (!svc.IsReady(core_id))
-            done = true; // piece issuing on this core has not finished, quit
-        else if (!transport.PeriodicIO(core_id))
+//        if (!svc.IsReady(core_id))
+//            done = true; // piece issuing on this core has not finished, quit
+//        else
+        if (!transport.PeriodicIO(core_id))
             done = true; // did not receive new piece from network
     } while (!done);
     trace(TRACE_IPPT "Coroutine Exit on core {}", core_id);

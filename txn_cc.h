@@ -128,9 +128,11 @@ class FutureValue<void> {
       wait_cnt++;
       if ((wait_cnt & 0x0FFFF) == 0) {
         auto routine = go::Scheduler::Current()->current_routine();
-        if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt()) {
-          continue;
-        }
+        // FIXME: Shujian: Currently disable preemption due to initialization_phase_run issue
+//        logger->critical("Preempt3 back");
+//        if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt()) {
+//          continue;
+//        }
       }
       _mm_pause();
     }

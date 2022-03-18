@@ -533,6 +533,7 @@ EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_po
 //    this->ProcessBatchCounter(core_id);
 
   state.running = State::kDeciding;
+    EpochPhase phase = util::Instance<EpochManager>().current_phase();
   if (util::Instance<EpochManager>().current_phase() == EpochPhase::Execute && !IsReady(core_id)) {
     state.running = State::kSleeping;
     return false;
@@ -599,12 +600,17 @@ EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_po
     //       core_id, n, nr_bubbles);
     trace(TRACE_COMPLETION "DispatchService on core {} notifies {}+{} completions",
           core_id, n, nr_bubbles);
+//    abort_if(nr_bubbles > 0, "WTF is nr bubbles");
+//    tot_comp-= n+nr_bubbles;
+//    abort_if(tot_comp < 0, "Total count over completed {}", tot_comp);
     comp->Complete(n + nr_bubbles);
   }
 
 //  logger->info("Reached the last process batch counter core {}", core_id);
 
-  this->ProcessBatchCounter(core_id);
+    if (phase == EpochPhase::Execute) {
+        this->ProcessBatchCounter(core_id);
+    }
   return false;
 }
 
@@ -716,6 +722,74 @@ bool EpochExecutionDispatchService::Peek(int core_id, PriorityTxn *&txn, bool dr
     return false;
 }
 
+bool EpochExecutionDispatchService::Peek_IPPT(int core_id, PriorityTxn *&txn, int batch_txn_remaining, bool dry_run)
+{
+    abort_if(dry_run, "WTF is a dry run?");
+    if (!NodeConfiguration::g_priority_txn)
+        return false;
+
+    /**
+     * Should allow batch initialization to occur concurrently.
+     * However, if determined that the phase/epoch is ending, then will end execution
+     * During initialization, ShouldCutoff = false, IsReady=(first false) true;
+     * Signal End of Initialization Phase, ShouldCutoff = true, IsReady=false;
+     */
+    /*if(ShouldCutoff(core_id)) {
+        return false;
+    }*/
+
+    // hack 2: if on this core, no batched pieces of this epoch has ever been run
+    // (which leads to prog not being updated), don't run
+    // No one is interested in batch progress during initialization phase
+    /*uint64_t prog = util::Instance<PriorityTxnService>().GetProgress(core_id);
+    if (prog >> 32 != util::Instance<EpochManager>().current_epoch_nr())
+        return false;*/
+
+    // hack 3: make sure pq doesn't get run after this core has no piece to run
+    if (batch_txn_remaining == 0)
+        return false;
+    /*
+    if (queues[core_id]->pq.sched_pol->len == 0)
+        return false;
+    this->ProcessBatchCounter(core_id);
+    if (util::Instance<PriorityTxnService>().BatchPcCnt[core_id]->Get() == 0)
+        return false;
+    */
+
+    auto &tq = queues[core_id]->tq;
+    auto tstart = tq.start.load(std::memory_order_acquire);
+    if (tstart < tq.end.load(std::memory_order_acquire)) {
+        PriorityTxn *candidate = tq.q + tstart;
+        auto epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
+        if (candidate->epoch != epoch_nr) {
+
+            // hack 4: if a priority txn is from a previous epoch, skip it
+            if (candidate->epoch < epoch_nr) {
+                auto from = tstart;
+                while (tstart < tq.end.load(std::memory_order_acquire) && candidate->epoch < epoch_nr)
+                    candidate = tq.q + ++tstart;
+                tq.start.store(tstart, std::memory_order_release);
+
+                // trace(TRACE_PRIORITY "core {} SKIPPED from pos {} ({}) to pos {} ({})", core_id, from, from * 32 + core_id + 1, tstart, tstart * 32 + core_id + 1);
+            }
+
+            return false;
+        }
+
+        if (__rdtsc() - PriorityTxnService::g_tsc < candidate->delay)
+            return false;
+        if (!dry_run) {
+            tq.start.store(tstart + 1, std::memory_order_release);
+            txn = candidate;
+            EpochClient::g_workload_client->completion_object()->Increment(1);
+        }
+
+        // trace(TRACE_PRIORITY "core {} peeked on pos {} (pri id {}), txn {:p}", core_id, tstart, tstart * 32 + core_id + 1, (void*)txn);
+        return true;
+    }
+    return false;
+}
+
 void EpochExecutionDispatchService::AddBubble()
 {
   tot_bubbles.fetch_add(1);
@@ -770,6 +844,10 @@ void EpochExecutionDispatchService::Complete(int core_id, CompleteType type)
   auto &c = state.complete_counter;
   c.completed++;
   if (type == CompleteType::BatchPiece) {
+//      auto phase = util::Instance<EpochManager>().current_phase();
+//      if (phase != EpochPhase::Execute) {
+//          abort_if(true, "Batch completed during initialization?");
+//      }
     auto &bc = state.batch_complete_counter;
     bc.completed++;
   } else if (type == CompleteType::PriorityPiece){

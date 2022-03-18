@@ -16,29 +16,32 @@ class CompletionObject {
     logger->info("Completion object at {}", (void *) this);
   }
 
-  void Complete(long dec = 1) {
-    // if(dec > 1){
-    //   logger->info("Completion decremented {}", dec);
-    // }
-    callback.PreComplete();
-    auto cnt = comp_count.fetch_sub(dec) - dec;
-    if (cnt < 0) {
-      fprintf(stderr, "Completion handler isn't enough %ld!\n", cnt);
-      std::abort();
+    void Complete(long dec = 1)
+    {
+        callback.PreComplete();
+        auto cnt = comp_count.fetch_sub(dec) - dec;
+//        if (dec > 1) {
+//            logger->info("Completion decremented {} {}", dec, cnt);
+//        }
+        if (cnt < 0) {
+            fprintf(stderr, "Completion handler isn't enough %ld!\n", cnt);
+            std::abort();
+        }
+        callback(cnt);
     }
-    callback(cnt);
-  }
 
-  void operator()() {
-    Complete();
-  }
+    void operator()()
+    {
+//        logger->info("Completion operator called");
+        Complete();
+    }
 
-  void Increment(unsigned long inc) {
-    // if(inc > 1){
-    //   logger->info("Completion incremented {}", inc);
-    // }
-    comp_count.fetch_add(inc);
-  }
+    void Increment(unsigned long inc)
+    {
+        comp_count.fetch_add(inc);
+//        auto cnt = comp_count.fetch_add(inc) + inc;
+//        logger->info("Completion incremented {} {}", inc, cnt);
+    }
 
   unsigned long left_over() const {
     return comp_count.load();
