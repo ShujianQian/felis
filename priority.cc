@@ -257,6 +257,11 @@ PriorityTxnService::PriorityTxnService()
     r->set_urgent(true);
     go::GetSchedulerFromPool(i + 1)->WakeUp(r);
   }
+
+  // compute the static maximum batch sequence for each epoch under this config
+  // used for IPPT sid checking
+  uint64_t num_txn = EpochClient::g_workload_client-> NumberOfTxns();
+  max_batch_seq = num_txn + (num_txn - 1) / g_strip_batched * g_strip_priority;
 }
 
 // push a txn into txn queue, round robin
@@ -384,6 +389,54 @@ uint64_t sid2epo(uint64_t sid) { return sid >> 32; }
 uint64_t PriorityTxnService::GetSID(PriorityTxn *txn, VHandle **handles, int size)
 {
   auto cur_epoch = util::Instance<EpochManager>().current_epoch_nr();
+  auto cur_phase = util::Instance<EpochManager>().current_phase();
+  auto node_id = util::Instance<NodeConfiguration>().node_id();
+
+  // for IPPT: use SID from last epoch
+  // the sid must be larger than the max sid from last epoch
+  if (cur_phase != EpochPhase::Execute) {
+    // static max batch seq in each epoch under current config
+    uint64_t min_avail_seq = max_batch_seq;
+
+    // find seq of latest appended priority version
+    uint64_t max_prev_sid = 1;
+    for (int i = 0; i < size; ++i) {
+      auto sid = handles[i]->last_priority_version();
+      max_prev_sid = (max_prev_sid > sid) ? max_prev_sid : sid;
+    }
+
+    // IPPT in same epoch
+    auto epo = sid2epo(max_prev_sid);
+    if (epo == cur_epoch - 1) {
+      auto seq = sid2seq(max_prev_sid);
+      min_avail_seq = (min_avail_seq > seq) ? min_avail_seq : seq;
+    }
+
+    // TODO: Ray
+    //   check for sequences using rts from IPPT in same epoch?
+    //   check for EPPT that has lower sid than batch from last epoch?
+
+    // check for seq from previous rollbacks
+    uint64_t last_time_seq = sid2seq(txn->min_sid);
+    if (last_time_seq == 0) last_time_seq = 1;
+    int k = g_strip_batched + g_strip_priority;
+    if ((min_avail_seq - 1) / k <= (last_time_seq - 1) / k) {
+      min_avail_seq = last_time_seq + k;
+    }
+  
+    // find available SID in [min_avail_seq, +inf)
+    uint64_t available_seq = GetNextSIDSlot(min_avail_seq);
+
+    // use last epoch in the sid
+    auto result = ((cur_epoch - 1) << 32) | (available_seq << 8) | node_id;
+    abort_if(result <= txn->min_sid, "this time sid ({}) <= last abort's sid ({})",
+            format_sid(result), format_sid(txn->min_sid));
+
+    // logger->info("epoch = {}, IPPT sid: {}", cur_epoch, format_sid(result));
+
+    return result;
+  }
+
   if (g_sid_row_rts) {
     // get maximum rts from rows
     uint64_t max_rts = 1;

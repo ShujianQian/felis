@@ -128,6 +128,8 @@ class PriorityTxnService {
   static bool g_priority_preemption;
   static bool g_tpcc_pin;
 
+  uint64_t max_batch_seq;
+
   PriorityTxnService();
   void PushTxn(PriorityTxn* txn);
   void UpdateProgress(int core_id, uint64_t progress);
