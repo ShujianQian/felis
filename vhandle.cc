@@ -324,9 +324,12 @@ VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
       }
     }
     auto version = extra->ReadWithVersion(sid, 0, this);
+
+    /*
     if (!version) {
       return reinterpret_cast<VarStr *>(extra->last_batch_obj);
     }
+     */
     return version;
   }
   // TODO: Shujian: end of hack
@@ -608,6 +611,11 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
   // Writing to exact location
   sync().OfferData(addr, (uintptr_t) obj);
 
+  // if this is the last batch version in this epoch, write its result to extraVHandle for the use of IPPTs
+  if (it - versions == size - 1) {
+      this->WriteLastBatchVersion(sid, obj);
+  }
+
   int latest = it - versions;
   probes::VersionWrite{this, latest, epoch_nr}();
   while (latest > pos) {
@@ -634,6 +642,7 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
 
 bool SortedArrayVHandle::WriteExactVersion(unsigned int version_idx, VarStr *obj, uint64_t epoch_nr)
 {
+    logger->info("Writing Exact Version!!!!");
   abort_if(version_idx >= size, "WriteExactVersion overflowed {} >= {}", version_idx, size);
   // TODO: GC?
 
@@ -680,6 +689,22 @@ SortedArrayVHandle *SortedArrayVHandle::NewInline()
   auto r = new (inline_pool.Alloc()) SortedArrayVHandle();
   r->inline_used = 0;
   return r;
+}
+void SortedArrayVHandle::WriteLastBatchVersion(uint64_t sid, VarStr *obj)
+{
+    auto old = extra_vhandle.load();
+    if (old == nullptr) {
+        // did not exist, allocate
+        auto temp = new ExtraVHandle();
+        auto succ = extra_vhandle.compare_exchange_strong(old, temp);
+        if (succ)
+            old = temp;
+        else {
+            delete temp; // somebody else allocated and CASed their ptr first, just use that
+            old = extra_vhandle.load(); // all to avoid an extra atomic load
+        }
+    }
+    old->WriteLastBatchVersion(sid, obj);
 }
 
 mem::ParallelSlabPool BaseVHandle::pool;

@@ -9,11 +9,12 @@ std::map<std::string, Checkpoint *> Checkpoint::impl;
 
 void InitVersion(felis::VHandle *handle, VarStr *obj = (VarStr *) kPendingValue)
 {
-  handle->AppendNewVersion(0, 0);
-  if (obj != (void *) kPendingValue) {
-    abort_if(!handle->WriteWithVersion(0, obj, 0),
-              "Diverging outcomes during setup setup");
-  }
+    handle->AppendNewVersion(0, 0);
+    if (obj != (void *) kPendingValue) {
+        abort_if(!handle->WriteWithVersion(0, obj, 0),
+                 "Diverging outcomes during setup setup");
+    }
+    handle->WriteLastBatchVersion(0, obj);
 }
 
 VHandle *Table::NewRow()

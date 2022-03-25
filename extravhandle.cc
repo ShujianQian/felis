@@ -22,14 +22,15 @@ DoublyLinkedListExtraVHandle::DoublyLinkedListExtraVHandle()
         : head(nullptr),
           tail(nullptr),
           size(0),
-          last_batch_obj((uint64_t) VarStr::New(2000)), // TODO: Shujian Hack
+          // last_batch_obj((uint64_t) VarStr::New(2000)), // TODO: Shujian Hack
+          last_batch_obj(kPendingValue),
           last_batch_version(0),
           max_exec_sid(0)
 {
     // TODO: Shujian
     //  A *serious* hack for allowing priority txn to read empty batch
     //  by letting it read a useless last_batch_obj.
-    *((uint64_t *)((VarStr *)last_batch_obj)->data()) = 0;
+//    *((uint64_t *)((VarStr *)last_batch_obj)->data()) = 0;
     // TODO: Shujian: end of hack
 
     this_coreid = alloc_by_regionid = mem::ParallelPool::CurrentAffinity();
@@ -84,15 +85,6 @@ bool DoublyLinkedListExtraVHandle::AppendNewPriorityVersion(uint64_t sid)
 
         lock.Unlock(&q_node);
 
-        // update max_exec_sid when in execution phase
-        EpochPhase curr_phase = EpochClient::g_workload_client->callback.phase;
-        if (curr_phase == EpochPhase::Execute) {
-            uint64_t old_max_exec_sid;
-            do {
-                old_max_exec_sid = max_exec_sid.load();
-            } while(sid > old_max_exec_sid && !max_exec_sid.compare_exchange_strong(old_max_exec_sid, sid));
-        }
-
         return true;
     } else if (PriorityTxnService::g_hybrid_insert) {
         // hybrid insert
@@ -133,15 +125,6 @@ bool DoublyLinkedListExtraVHandle::AppendNewPriorityVersion(uint64_t sid)
                 size++;
                 lock.Unlock(&q_node);
 
-                // update max_exec_sid when in execution phase
-                EpochPhase curr_phase = EpochClient::g_workload_client->callback.phase;
-                if (curr_phase == EpochPhase::Execute) {
-                    uint64_t old_max_exec_sid;
-                    do {
-                        old_max_exec_sid = max_exec_sid.load();
-                    } while(sid > old_max_exec_sid && !max_exec_sid.compare_exchange_strong(old_max_exec_sid, sid));
-                }
-
                 return true;
 
             }
@@ -154,15 +137,6 @@ bool DoublyLinkedListExtraVHandle::AppendNewPriorityVersion(uint64_t sid)
         // TODO: Shujian: understand if this size is used, if so why is it not
         //  atomic
         size++;
-
-        // update max_exec_sid when in execution phase
-        EpochPhase curr_phase = EpochClient::g_workload_client->callback.phase;
-        if (curr_phase == EpochPhase::Execute) {
-            uint64_t old_max_exec_sid;
-            do {
-                old_max_exec_sid = max_exec_sid.load();
-            } while(sid > old_max_exec_sid && !max_exec_sid.compare_exchange_strong(old_max_exec_sid, sid));
-        }
 
         return true;
     } else {
@@ -188,15 +162,6 @@ bool DoublyLinkedListExtraVHandle::AppendNewPriorityVersion(uint64_t sid)
         //  atomic
         size++;
 
-        // update max_exec_sid when in execution phase
-        EpochPhase curr_phase = EpochClient::g_workload_client->callback.phase;
-        if (curr_phase == EpochPhase::Execute) {
-            uint64_t old_max_exec_sid;
-            do {
-                old_max_exec_sid = max_exec_sid.load();
-            } while(sid > old_max_exec_sid && !max_exec_sid.compare_exchange_strong(old_max_exec_sid, sid));
-        }
-
         return true;
     }
 }
@@ -206,6 +171,7 @@ VarStr *DoublyLinkedListExtraVHandle::ReadWithVersion(uint64_t sid,
                                                       SortedArrayVHandle
                                                       *handle)
 {
+    EpochPhase curr_phase = util::Instance<EpochManager>().current_phase();
     util::MCSSpinLock::QNode q_node;
     if (RequiresLock()) {
         lock.Lock(&q_node);
@@ -213,8 +179,9 @@ VarStr *DoublyLinkedListExtraVHandle::ReadWithVersion(uint64_t sid,
 
     Entry *p = tail;
 
+
     // find the version that is closer than the version array version
-    while (p && (p->version > ver) &&
+    while (p && (p->version > ver) && (curr_phase == EpochPhase::Execute || p->version > max_exec_sid) &&
             ((p->version >= sid) ||
                     (p->version < sid
                             && VHandleSyncService::IsIgnoreVal(p->object)))) {
@@ -226,10 +193,15 @@ VarStr *DoublyLinkedListExtraVHandle::ReadWithVersion(uint64_t sid,
     }
 
     if (!p) {
-        return nullptr;
+        if (curr_phase == EpochPhase::Execute) {
+            return nullptr;
+        } else {
+            return (VarStr *) last_batch_obj;
+        }
     }
 
     abort_if(p->version >= sid, "p->version >= sid, {} >= {}", p->version, sid);
+    abort_if(p->version < max_exec_sid, "p->version < max_exec_sid, {} < {}", p->version, max_exec_sid);
 
     // TODO: Shujian: this is probably unnecessary
     auto extra_ver = p->version;
@@ -463,6 +435,19 @@ bool DoublyLinkedListExtraVHandle::WriteWithVersion(uint64_t sid, VarStr *obj)
     volatile uintptr_t *obj_ptr_ptr = &p->object;
 //    trace(TRACE_DEADLOCK "writing to sid {}", sid_info(sid));
     util::Impl<VHandleSyncService>().OfferData(obj_ptr_ptr, (uintptr_t) obj);
+
+    if (VHandleSyncService::IsIgnoreVal((uintptr_t) obj)) {
+        return true;
+    }
+
+    // update max_exec_sid when in execution phase if written actual value
+    EpochPhase curr_phase = EpochClient::g_workload_client->callback.phase;
+    if (curr_phase == EpochPhase::Execute) {
+        uint64_t old_max_exec_sid;
+        do {
+            old_max_exec_sid = max_exec_sid.load();
+        } while(sid > old_max_exec_sid && !max_exec_sid.compare_exchange_strong(old_max_exec_sid, sid));
+    }
     return true;
 }
 
@@ -546,10 +531,11 @@ void DoublyLinkedListExtraVHandle::GarbageCollect()
     }
 }
 
-void DoublyLinkedListExtraVHandle::WriteLastBatch(uint64_t sid, VarStr *obj)
+void DoublyLinkedListExtraVHandle::WriteLastBatchVersion(uint64_t sid, VarStr *obj)
 {
     volatile uintptr_t *obj_ptr_ptr = &this->last_batch_obj;
-    util::Impl<VHandleSyncService>().OfferData(obj_ptr_ptr, (uintptr_t) obj);
+//    util::Impl<VHandleSyncService>().OfferData(obj_ptr_ptr, (uintptr_t) obj);
+    this->last_batch_obj = (uintptr_t) obj;
     this->last_batch_version = sid;
 }
 

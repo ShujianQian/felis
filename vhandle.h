@@ -227,6 +227,7 @@ class SortedArrayVHandle : public BaseVHandle {
   bool ShouldScanSkip(uint64_t sid);
   void AppendNewVersion(uint64_t sid, uint64_t epoch_nr, int ondemand_split_weight = 0);
   bool AppendNewPriorityVersion(uint64_t sid);
+  void WriteLastBatchVersion(uint64_t sid, VarStr *obj);
   VarStr *ReadWithVersion(uint64_t sid);
   VarStr *ReadExactVersion(unsigned int version_idx);
   bool CheckReadBit(uint64_t sid);

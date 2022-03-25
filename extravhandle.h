@@ -282,7 +282,7 @@ class DoublyLinkedListExtraVHandle
      * \param sid The SID of the writing batch transaction.
      * \param obj The pointer to the object of the version.
      */
-    void WriteLastBatch(uint64_t sid, VarStr *obj);
+    void WriteLastBatchVersion(uint64_t sid, VarStr *obj);
 };
 
 } // namespace felis
