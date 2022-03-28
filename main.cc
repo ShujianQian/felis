@@ -10,6 +10,8 @@
 #include "log.h"
 #include "epoch.h"
 #include "opts.h"
+#include "benchmark/ycsb/YcsbVerificator.h"
+#include "verification_txn_collector.h"
 
 void show_usage(const char *progname)
 {
@@ -104,6 +106,11 @@ int main(int argc, char *argv[])
     abort_if(Options::kPriorityTxn, "Cannot turn on both PriorityTxn and PriorityBatchMode");
     NodeConfiguration::g_priority_batch_mode = true;
     NodeConfiguration::g_priority_batch_mode_pct = Options::kPercentagePriorityTxn.ToInt();
+  }
+
+  if(EpochClient::g_perform_verification){
+      util::InstanceInit<verification::YcsbVerificator>();
+      util::InstanceInit<verification::VerificationTxnCollector>();
   }
 
   // init tables from the workload module

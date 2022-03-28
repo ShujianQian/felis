@@ -21,6 +21,7 @@
 #include "literals.h"
 #include "util/os.h"
 #include "json11/json11.hpp"
+#include "benchmark/ycsb/YcsbVerificator.h"
 
 namespace felis {
 
@@ -29,6 +30,7 @@ bool EpochClient::g_enable_granola = false;
 bool EpochClient::g_enable_pwv = false;
 long EpochClient::g_corescaling_threshold = 0;
 long EpochClient::g_splitting_threshold = std::numeric_limits<long>::max();
+bool EpochClient::g_perform_verification = true;
 size_t EpochClient::g_txn_per_epoch = 100000;
 
 void EpochCallback::operator()(unsigned long cnt)
@@ -213,6 +215,10 @@ void EpochClient::Start()
   logger->info("load percentage {}%", LoadPercentage());
 
   perf = PerfLog();
+  if(EpochClient::g_perform_verification){
+      util::Instance<EpochManager>().DoAdvance(this);
+      util::Instance<verification::YcsbVerificator>().InitializeExperiment();
+  }
   go::GetSchedulerFromPool(0)->WakeUp(&control);
 }
 
@@ -751,6 +757,9 @@ void EpochClient::OnExecuteComplete()
   }
 
   if (cur_epoch_nr + 1 < g_max_epoch) {
+    if(EpochClient::g_perform_verification){
+      util::Instance<verification::YcsbVerificator>().VerifyDatabaseState();
+    }
     InitializeEpoch();
     util::Instance<PriorityTxnService>().ClearBitMap();
   } else {
@@ -914,7 +923,7 @@ void EpochManager::DoAdvance(EpochClient *client)
 }
 
 EpochManager::EpochManager(EpochMemory *mem, Epoch *epoch)
-    : cur_epoch_nr(0), cur_epoch(epoch), mem(mem)
+    : cur_epoch_nr(-1), cur_epoch(epoch), mem(mem)
 {
   cur_epoch.load()->mem = mem;
 }

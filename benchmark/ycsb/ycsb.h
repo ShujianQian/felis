@@ -7,6 +7,12 @@
 #include "index.h"
 
 #include "benchmark/ycsb/zipfian_random.h"
+#include "YcsbVerificator.h"
+
+namespace verification{
+    class RMWVerificationTxn;
+    class MWVerificationTxn;
+}
 
 namespace ycsb {
 
@@ -37,6 +43,9 @@ class Client : public felis::EpochClient {
 
   friend class RMWTxn;
   friend class MWTxn;
+  friend class verification::RMWVerificationTxn;
+  friend class verification::MWVerificationTxn;
+protected:
   static char zero_data[100];
  public:
   static double g_theta;
@@ -59,6 +68,38 @@ class YcsbLoader : public go::Routine {
   void Run() override final;
   void Wait() { while (!done) sleep(1); }
 };
+
+static constexpr int kTotal = 10;
+struct RMWStruct {
+    uint64_t keys[kTotal];
+};
+
+static constexpr int kMWTotal = 2;
+struct MWStruct {
+    uint64_t keys[kMWTotal];
+};
+
+}
+
+namespace verification{
+    class RMWVerificationTxn : public VerificationTxn {
+    private:
+        ycsb::RMWStruct input;
+    public:
+        RMWVerificationTxn(ycsb::RMWStruct input):input(input){};
+        void Run() override;
+        VerificationTxnKeys GetTxnKeys() override final;
+    };
+
+    class MWVerificationTxn : public VerificationTxn {
+    private:
+        ycsb::MWStruct input;
+    public:
+        MWVerificationTxn(ycsb::MWStruct input):input(input){};
+        void Run() override;
+        VerificationTxnKeys GetTxnKeys() override final;
+    };
+
 
 }
 

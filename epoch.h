@@ -147,6 +147,7 @@ class EpochClient {
 
   static long g_corescaling_threshold;
   static long g_splitting_threshold;
+  static bool g_perform_verification;
 
   EpochClient();
   virtual ~EpochClient() {}

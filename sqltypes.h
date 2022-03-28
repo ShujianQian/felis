@@ -322,6 +322,13 @@ class Object : public Base {
     return str;
   }
 
+//  VarStr *EncodeVerification() const {
+//    VarStr *str = VarStr::New(this->EncodeSize());
+//    // this->EncodeTo((uint8_t *) str + sizeof(VarStr));
+//    this->EncodeTo(str->data());
+//    return str;
+//  }
+
   VarStr *EncodeToPtr(void *ptr) const {
     VarStr *str = VarStr::FromPtr(ptr, this->EncodeSize());
     // this->EncodeTo((uint8_t *) str + sizeof(VarStr));

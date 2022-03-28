@@ -9,7 +9,6 @@ namespace ycsb {
 
 using namespace felis;
 
-static constexpr int kTotal = 10;
 static constexpr int kNrMSBContentionKey = 6;
 
 class DummySliceRouter {
@@ -19,10 +18,6 @@ class DummySliceRouter {
 
 
 // static uint64_t *g_permutation_map;
-
-struct RMWStruct {
-  uint64_t keys[kTotal];
-};
 
 struct RMWState {
   VHandle *rows[kTotal];
@@ -275,12 +270,6 @@ void RMWTxn::Run()
   }
 }
 
-static constexpr int kMWTotal = 2;
-
-struct MWStruct {
-  uint64_t keys[kMWTotal];
-};
-
 struct MWState {
   VHandle *rows[kMWTotal];
   InvokeHandle<MWState> futures[kMWTotal];
@@ -494,7 +483,17 @@ void YcsbLoader::Run()
       Ycsb::Key dbk;
       Ycsb::Value dbv;
       dbk.k = i;
-      dbv.v.resize_junk(999);
+//      dbv.v.resize_junk(999);
+        /*
+         * Tests:
+         * -Change ECE496 to something else
+         * -if key was modified or not
+         * */
+       /* if(i%2 == 0){
+            continue;
+        }*/
+      std::string my_value = "ECE496" + std::to_string(i);
+      dbv.v.assign(my_value);
       auto handle = mgr.Get<ycsb::Ycsb>().SearchOrCreate(dbk.EncodeView(buf));
       // TODO: slice mapping table stuff?
       felis::InitVersion(handle, dbv.Encode());
@@ -544,5 +543,53 @@ BaseTxn *Client::CreateTxn(uint64_t serial_id)
   }
   return new RMWTxn(this, serial_id);
 }
+
+}
+
+namespace verification{
+    void RMWVerificationTxn::Run() {
+        /**
+         * TODO:
+         * - Look at g_extra_read, g_dependency...
+         */
+        assert(ycsb::Client::g_extra_read == 0);
+        assert(!ycsb::Client::g_dependency);
+        for (int i = 0; i < ycsb::kTotal; i++){
+            auto value = util::Instance<YcsbVerificator>().table.Get(this->input.keys[i]);
+//        value->assign(Client::zero_data, 100);
+//        value->resize_junk(999);
+            auto row = value->ToType<ycsb::Ycsb::Value>();
+            row.v.assign(ycsb::Client::zero_data, 100);
+            row.v.resize_junk(999);
+        }
+        auto value = util::Instance<YcsbVerificator>().table.Get(this->input.keys[ycsb::kTotal - 1]);
+        auto row = value->ToType<ycsb::Ycsb::Value>();
+        row.v.assign(ycsb::Client::zero_data, 100);
+        row.v.resize_junk(999);
+    }
+
+    VerificationTxnKeys RMWVerificationTxn::GetTxnKeys() {
+        return VerificationTxnKeys{input.keys, ycsb::kTotal};
+    }
+
+
+    void MWVerificationTxn::Run() {
+        /**
+         * TODO:
+         * - Look at g_extra_read, g_dependency...
+         */
+        assert(ycsb::Client::g_extra_read == 0);
+        assert(!ycsb::Client::g_dependency);
+        for (int i = 0; i < ycsb::kTotal; i++){
+            auto value = util::Instance<YcsbVerificator>().table.Get(this->input.keys[i]);
+            auto row = value->ToType<ycsb::Ycsb::Value>();
+            row.v.assign(ycsb::Client::zero_data, 100);
+            row.v.resize_junk(999);
+        }
+    }
+
+    VerificationTxnKeys MWVerificationTxn::GetTxnKeys() {
+        return VerificationTxnKeys{input.keys, ycsb::kMWTotal};
+    }
 
 }

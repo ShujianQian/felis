@@ -3,6 +3,7 @@
 
 #include "priority.h"
 #include "benchmark/ycsb/ycsb.h"
+#include "YcsbVerificator.h"
 
 namespace ycsb {
 
@@ -22,5 +23,14 @@ MWTxnInput Client::GenerateTransactionInput<MWTxnInput>();
 bool MWTxn_Run(felis::PriorityTxn *txn);
 
 }
-
+namespace verification{
+    class PriorityMWVerificationTxn : public VerificationTxn {
+    private:
+        felis::MWTxnInput input;
+    public:
+        PriorityMWVerificationTxn(felis::MWTxnInput input):input(input){};
+        void Run() override;
+        VerificationTxnKeys GetTxnKeys() override final;
+    };
+}
 #endif /* YCSB_PRIORITY_H */

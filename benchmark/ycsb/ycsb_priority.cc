@@ -152,4 +152,25 @@ bool MWTxn_Run(PriorityTxn *txn)
   return txn->Commit();
 }
 
+
+}
+namespace verification{
+    void PriorityMWVerificationTxn::Run() {
+        /**
+         * TODO:
+         * - Look at g_extra_read, g_dependency...
+         */
+        assert(felis::Client::g_extra_read == 0);
+        assert(!felis::Client::g_dependency);
+        for (int i = 0; i < input.nr; i++){
+            auto value = util::Instance<YcsbVerificator>().table.Get(this->input.keys[i]);
+//        value->assign(Client::zero_data, 100);
+            auto row = value->ToType<ycsb::Ycsb::Value>();
+            row.v.resize_junk(90);
+        }
+    }
+
+    VerificationTxnKeys PriorityMWVerificationTxn::GetTxnKeys() {
+        return VerificationTxnKeys{input.keys, input.nr};
+    }
 }

@@ -39,6 +39,9 @@ add_executable(db
 
         pwv_graph.cc
 
+        verification_txn_collector.cpp
+        benchmark/ycsb/YcsbVerificator.cpp
+
         benchmark/ycsb/ycsb.cc
         benchmark/ycsb/ycsb_workload.cc
         benchmark/ycsb/ycsb_priority.cc
