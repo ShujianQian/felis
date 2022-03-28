@@ -265,6 +265,9 @@ void CallTxnsWorker::initialization_phase_run()
     PieceRoutine *next_r;
     go::Scheduler *sched = scheduler();
 
+    const uint64_t epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
+    util::Instance<PriorityTxnService>().UpdateEpochStartTime(epoch_nr);
+
     auto should_pop_pri =
             PromiseRoutineDispatchService::GenericDispatchPeekListener(
                     [&next_r, sched]

@@ -132,6 +132,7 @@ class PriorityTxnService {
 
   PriorityTxnService();
   void PushTxn(PriorityTxn* txn);
+  void UpdateEpochStartTime(uint64_t epoch_nr);
   void UpdateProgress(int core_id, uint64_t progress);
   void PrintProgress(void);
   uint64_t GetMaxProgress(void);

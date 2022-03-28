@@ -280,6 +280,15 @@ std::string format_sid(uint64_t sid)
          ", txn sequence " + std::to_string(sid >> 8 & 0xFFFFFF);
 }
 
+void PriorityTxnService::UpdateEpochStartTime(uint64_t epoch_nr)
+{
+  uint64_t old_nr = this->epoch_nr.load();
+  if (epoch_nr > old_nr) {
+    if (this->epoch_nr.compare_exchange_strong(old_nr, epoch_nr))
+      PriorityTxnService::g_tsc = __rdtsc();
+  }
+}
+
 void PriorityTxnService::UpdateProgress(int core_id, uint64_t progress)
 {
   if (unlikely(exec_progress[core_id] == nullptr))
