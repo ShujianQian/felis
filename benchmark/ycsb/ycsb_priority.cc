@@ -122,8 +122,13 @@ bool MWTxn_Run(PriorityTxn *txn)
 //          trace(TRACE_DEADLOCK "sid {} read on row {}", sid_info(ctx.txn->sid), ctx.key);
           auto row = ctx.txn->Read<Ycsb::Value>(ctx.row);
 //          row.v.resize_junk(90);
-           std::string value = "priority ECE496" + std::to_string(ctx.txn->serial_id());
-          row.v.assign(value);
+//           std::string value = "priority ECE496" + std::to_string(ctx.txn->serial_id());
+//          row.v.assign(value);
+            std::string old_value(row.v.data(), row.v.size());
+            row.v.assign("priority ECE496" + std::to_string(
+                    std::hash<std::string>{}(
+                            old_value+ std::to_string(ctx.txn->serial_id())
+                    )));
           ctx.txn->Write(ctx.row, row);
 
           // record exec time
@@ -175,8 +180,13 @@ namespace verification{
 //        value->assign(Client::zero_data, 100);
             auto row = value->ToType<ycsb::Ycsb::Value>();
 //            row.v.resize_junk(90);
-            std::string row_value = "priority ECE496" + std::to_string(this->sid);
-            row.v.assign(row_value);
+//            std::string row_value = "priority ECE496" + std::to_string(this->sid);
+//            row.v.assign(row_value);
+            std::string old_value(row.v.data(), row.v.size());
+            row.v.assign("priority ECE496" + std::to_string(
+                    std::hash<std::string>{}(
+                            old_value+ std::to_string(this->sid)
+                    )));
             util::Instance<YcsbVerificator>().table.Update(this->input.keys[i], row.Encode());
         }
     }
