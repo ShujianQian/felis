@@ -251,7 +251,9 @@ void BasePieceCollection::ExecutionRoutine::Run()
     if (svc.Peek(core_id, txn)) {
       txn->Run();
       svc.Complete(core_id, PromiseRoutineDispatchService::CompleteType::PriorityInit);
-      util::Instance<PriorityTxnService>().stats.GetStatisticForEpoch(epoch_nr )[core_id].eppt_executed++;
+        if(NodeConfiguration::g_priority_txn) {
+            util::Instance<PriorityTxnService>().stats.GetStatisticForEpoch(epoch_nr)[core_id].eppt_executed++;
+        }
       continue;
     }
 

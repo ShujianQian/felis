@@ -689,7 +689,10 @@ bool EpochExecutionDispatchService::Peek(int core_id, PriorityTxn *&txn, bool dr
                     candidate = tq.q + ++tstart;
                 tq.start.store(tstart, std::memory_order_release);
                 // trace(TRACE_PRIORITY "core {} SKIPPED from pos {} ({}) to pos {} ({})", core_id, from, from * 32 + core_id + 1, tstart, tstart * 32 + core_id + 1);
-                util::Instance<PriorityTxnService>().stats.GetStatisticForEpoch(epoch_nr )[core_id].eppt_skipped += tstart - from;
+                if(NodeConfiguration::g_priority_txn) {
+                    util::Instance<PriorityTxnService>().stats.GetStatisticForEpoch(epoch_nr)[core_id].eppt_skipped +=
+                            tstart - from;
+                }
                 if (core_id == 0) {
                     trace(TRACE_IPPT "Caught by hack 4, skipping pt from prev epochs");
                 }
@@ -770,8 +773,10 @@ bool EpochExecutionDispatchService::Peek_IPPT(int core_id, PriorityTxn *&txn, in
                 while (tstart < tq.end.load(std::memory_order_acquire) && candidate->epoch < epoch_nr)
                     candidate = tq.q + ++tstart;
                 tq.start.store(tstart, std::memory_order_release);
-                util::Instance<PriorityTxnService>().stats.GetStatisticForEpoch(epoch_nr )[core_id].ippt_skipped += tstart - from;
-
+                if(NodeConfiguration::g_priority_txn) {
+                    util::Instance<PriorityTxnService>().stats.GetStatisticForEpoch(epoch_nr)[core_id].ippt_skipped +=
+                            tstart - from;
+                }
                 // trace(TRACE_PRIORITY "core {} SKIPPED from pos {} ({}) to pos {} ({})", core_id, from, from * 32 + core_id + 1, tstart, tstart * 32 + core_id + 1);
             }
 

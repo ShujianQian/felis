@@ -328,7 +328,9 @@ void CallTxnsWorker::initialization_phase_run()
             txn->Run();
             svc.Complete(core_id,
                          PromiseRoutineDispatchService::CompleteType::PriorityInit);
-            util::Instance<PriorityTxnService>().stats.GetStatisticForEpoch(epoch_nr )[core_id].ippt_executed++;
+            if(NodeConfiguration::g_priority_txn){
+                util::Instance<PriorityTxnService>().stats.GetStatisticForEpoch(epoch_nr )[core_id].ippt_executed++;
+            }
             continue;
         }
         // trace(TRACE_IPPT "Core {} Phase {}", t, client->callback.phase);
@@ -759,13 +761,17 @@ void EpochClient::OnExecuteComplete()
   }
 
   if (cur_epoch_nr + 1 < g_max_epoch) {
-    util::Instance<PriorityTxnService>().stats.PrintStats(cur_epoch_nr);
+      if(NodeConfiguration::g_priority_txn) {
+          util::Instance<PriorityTxnService>().stats.PrintStats(cur_epoch_nr);
+      }
     if(EpochClient::g_perform_verification){
       util::Instance<verification::YcsbVerificator>().ExecuteEpoch();
       util::Instance<verification::YcsbVerificator>().VerifyDatabaseState();
       util::Instance<verification::VerificationTxnCollector>().ClearTxns();
     }
-    util::Instance<PriorityTxnService>().stats.AddEpoch();
+    if(NodeConfiguration::g_priority_txn){
+        util::Instance<PriorityTxnService>().stats.AddEpoch();
+    }
     InitializeEpoch();
     util::Instance<PriorityTxnService>().ClearBitMap();
   } else {
@@ -779,7 +785,9 @@ void EpochClient::OnExecuteComplete()
       logger->info("PriorityTxnService::execute_piece_time {} ms", PriorityTxnService::execute_piece_time);
     mem::PrintMemStats();
     mem::GetDataRegion().PrintUsageEachClass();
-    PriorityTxnService::PrintStats();
+    if(NodeConfiguration::g_priority_txn){
+        PriorityTxnService::PrintStats();
+    }
 
     if (Options::kOutputDir) {
       json11::Json::object result {
