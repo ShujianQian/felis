@@ -541,9 +541,15 @@ void DoublyLinkedListExtraVHandle::WriteLastBatchVersion(uint64_t sid, VarStr *o
 
 VarStr *DoublyLinkedListExtraVHandle::SpyLastVersion() {
     Entry *p = tail;
+
+    while (p && VHandleSyncService::IsIgnoreVal(p->object)){
+        p = p->prev;
+    }
+    auto extra_ver = p->version;
+
+    // pointer to the object pointer in the version
     volatile uintptr_t *obj_ptr_ptr = &(p->object);
-    // TODO: Shujian: This might be unnecessary.
-    auto varstr_ptr = *obj_ptr_ptr & ~kReadBitMask;
-    return (VarStr *) varstr_ptr;
+
+    return (VarStr *) *obj_ptr_ptr;
 }
 } // namespace felis
