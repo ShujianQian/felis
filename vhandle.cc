@@ -707,7 +707,11 @@ void SortedArrayVHandle::WriteLastBatchVersion(uint64_t sid, VarStr *obj)
     old->WriteLastBatchVersion(sid, obj);
 }
 
-mem::ParallelSlabPool BaseVHandle::pool;
+ExtraVHandle *SortedArrayVHandle::VerificatorGetExtraVhandle() {
+    return extra_vhandle.load();
+}
+
+    mem::ParallelSlabPool BaseVHandle::pool;
 mem::ParallelSlabPool LinkedListExtraVHandle::Entry::pool;
 mem::ParallelSlabPool BaseVHandle::inline_pool;
 

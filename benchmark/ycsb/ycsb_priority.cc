@@ -145,7 +145,7 @@ bool MWTxn_Run(PriorityTxn *txn)
 
   if(EpochClient::g_perform_verification){
       util::Instance<verification::VerificationTxnCollector>().
-              CollectTxn(txn->sid,new verification::PriorityMWVerificationTxn(input));
+              CollectTxn(txn->sid,new verification::PriorityMWVerificationTxn(input, txn->sid));
   }
 
   // record acquired SID's difference from current max progress

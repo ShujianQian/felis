@@ -292,7 +292,8 @@ class SortedArrayVHandle : public BaseVHandle {
   uint8_t region_id() const { return alloc_by_regionid; }
   uint8_t object_coreid() const { return this_coreid; }
   int8_t contention_affinity() const { return cont_affinity; }
- private:
+  ExtraVHandle* VerificatorGetExtraVhandle();
+private:
   void AppendNewVersionNoLock(uint64_t sid, uint64_t epoch_nr, int ondemand_split_weight);
   unsigned int AbsorbNewVersionNoLock(unsigned int end, unsigned int extra_shift);
   void BookNewVersionNoLock(uint64_t sid, unsigned int pos) {

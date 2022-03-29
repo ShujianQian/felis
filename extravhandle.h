@@ -172,6 +172,8 @@ class DoublyLinkedListExtraVHandle
                             uint64_t ver,
                             SortedArrayVHandle *handle);
 
+    VarStr *SpyLastVersion();
+
     /*!
      * \brief Checks whether the read bit is set for the version read by
      * transaction with version sid.

@@ -71,19 +71,28 @@ namespace verification {
                 std::abort();
             }
             uint64_t last_sid = caracal_vhandle->last_version();
-//            if (felis::NodeConfiguration::g_priority_txn &&
-//                last_sid < caracal_vhandle->last_priority_version()) {
-//                last_sid = caracal_vhandle->last_priority_version();
-//            }
-            auto caracal_value = caracal_vhandle->ReadExactVersion(caracal_vhandle->nr_versions() - 1);
-            if (!caracal_value) {
-                logger->info("Failed Verification. Key (a version) was not found in caracal table during verification");
-                std::abort();
+            felis::VarStr* real_value;
+            if (felis::NodeConfiguration::g_priority_txn &&
+                last_sid < caracal_vhandle->last_priority_version()) {
+                auto priority_caracal_value = caracal_vhandle->VerificatorGetExtraVhandle()->SpyLastVersion();
+                if (!priority_caracal_value) {
+                    logger->info("Failed Verification. Key (a priority version) was not found in caracal table during verification");
+                    std::abort();
+                }
+                real_value = priority_caracal_value;
+            }else {
+                auto caracal_value = caracal_vhandle->ReadExactVersion(caracal_vhandle->nr_versions() - 1);
+                if (!caracal_value) {
+                    logger->info("Failed Verification. Key (a version) was not found in caracal table during verification");
+                    std::abort();
+                }
+                real_value = caracal_value;
             }
+
 
 //            logger->info("Verifying length {} verification {} caracal {}",
 //                          verification_value->length(), verification_value->data(), caracal_value->data());
-            if (memcmp(verification_value->data(), caracal_value->data(), verification_value->length()) != 0) {
+            if (memcmp(verification_value->data(), real_value->data(), verification_value->length()) != 0) {
                 logger->info("Failed Verification. Values in verification and caracal table mismatch");
                 std::abort();
             }
