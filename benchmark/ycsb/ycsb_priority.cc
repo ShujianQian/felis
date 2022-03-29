@@ -1,6 +1,7 @@
 #include "benchmark/ycsb/ycsb_priority.h"
 
 #include "sid_info.h"
+#include "verification_txn_collector.h"
 
 namespace ycsb {
 
@@ -120,7 +121,9 @@ bool MWTxn_Run(PriorityTxn *txn)
 
 //          trace(TRACE_DEADLOCK "sid {} read on row {}", sid_info(ctx.txn->sid), ctx.key);
           auto row = ctx.txn->Read<Ycsb::Value>(ctx.row);
-          row.v.resize_junk(90);
+//          row.v.resize_junk(90);
+           std::string value = "priority ECE496" + std::to_string(ctx.txn->serial_id());
+          row.v.assign(value);
           ctx.txn->Write(ctx.row, row);
 
           // record exec time
@@ -138,6 +141,11 @@ bool MWTxn_Run(PriorityTxn *txn)
     Context ctx{input.nr, input.keys[i], rows[i], txn};
     txn->IssuePromise(ctx, lambda);
     // trace(TRACE_PRIORITY "Priority txn {:p} (MW) - Issued lambda into PQ", (void *)txn);
+  }
+
+  if(EpochClient::g_perform_verification){
+      util::Instance<verification::VerificationTxnCollector>().
+              CollectTxn(txn->sid,new verification::PriorityMWVerificationTxn(input));
   }
 
   // record acquired SID's difference from current max progress
@@ -166,7 +174,10 @@ namespace verification{
             auto value = util::Instance<YcsbVerificator>().table.Get(this->input.keys[i]);
 //        value->assign(Client::zero_data, 100);
             auto row = value->ToType<ycsb::Ycsb::Value>();
-            row.v.resize_junk(90);
+//            row.v.resize_junk(90);
+            std::string row_value = "priority ECE496" + std::to_string(this->sid);
+            row.v.assign(row_value);
+            util::Instance<YcsbVerificator>().table.Update(this->input.keys[i], row.Encode());
         }
     }
 

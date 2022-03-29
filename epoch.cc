@@ -22,6 +22,7 @@
 #include "util/os.h"
 #include "json11/json11.hpp"
 #include "benchmark/ycsb/YcsbVerificator.h"
+#include "verification_txn_collector.h"
 
 namespace felis {
 
@@ -758,7 +759,9 @@ void EpochClient::OnExecuteComplete()
 
   if (cur_epoch_nr + 1 < g_max_epoch) {
     if(EpochClient::g_perform_verification){
+      util::Instance<verification::YcsbVerificator>().ExecuteEpoch();
       util::Instance<verification::YcsbVerificator>().VerifyDatabaseState();
+      util::Instance<verification::VerificationTxnCollector>().ClearTxns();
     }
     InitializeEpoch();
     util::Instance<PriorityTxnService>().ClearBitMap();

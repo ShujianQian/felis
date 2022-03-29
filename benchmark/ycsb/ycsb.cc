@@ -4,6 +4,7 @@
 #include "pwv_graph.h"
 #include "util/os.h"
 #include "util/random.h"
+#include "verification_txn_collector.h"
 
 namespace ycsb {
 
@@ -98,7 +99,13 @@ void RMWTxn::Prepare()
     Ycsb::Key dbk[kTotal];
     for (int i = 0; i < kTotal; i++) dbk[i].k = keys[i];
     INIT_ROUTINE_BRK(8192);
+    if(EpochClient::g_perform_verification){
+      RMWStruct input;
+      std::copy(std::begin(keys), std::end(keys), std::begin(input.keys));
 
+      util::Instance<verification::VerificationTxnCollector>().
+              CollectTxn(this->serial_id(), new verification::RMWVerificationTxn(input, this->serial_id()));
+    }
     // Omit the return value because this workload is totally single node
     TxnIndexLookup<DummySliceRouter, RMWState::LookupCompletion, void>(
         nullptr,
@@ -142,9 +149,19 @@ void RMWTxn::Prepare()
 void RMWTxn::WriteRow(TxnRow vhandle)
 {
   auto dbv = vhandle.Read<Ycsb::Value>();
-  dbv.v.assign(Client::zero_data, 100);
-  dbv.v.resize_junk(999);
-  vhandle.Write(dbv);
+//  dbv.v.assign(Client::zero_data, 100);
+//  dbv.v.resize_junk(999);
+  dbv.v.assign("RMWTxn ECE496" + std::to_string(vhandle.serial_id()));
+    vhandle.Write(dbv);
+  //  if(!vhandle.Write(dbv)){
+//      logger->info("Failed write?");
+//      std::abort();
+//  }
+//  auto dbv2 = vhandle.Read<Ycsb::Value>();
+//  if(memcmp(dbv.v.data(), dbv2.v.data(), 12) != 0){
+//      logger->info("Failed assumption");
+//      std::abort();
+//  }
 }
 
 void RMWTxn::ReadRow(TxnRow vhandle)
@@ -345,7 +362,13 @@ void MWTxn::Prepare()
     Ycsb::Key dbk[kMWTotal];
     for (int i = 0; i < kMWTotal; i++) dbk[i].k = keys[i];
     INIT_ROUTINE_BRK(8192);
+    if(EpochClient::g_perform_verification){
+      MWStruct input;
+      std::copy(std::begin(keys), std::end(keys), std::begin(input.keys));
 
+      util::Instance<verification::VerificationTxnCollector>().
+              CollectTxn(this->serial_id(), new verification::MWVerificationTxn(input, this->serial_id()));
+    }
     // Omit the return value because this workload is totally single node
     TxnIndexLookup<DummySliceRouter, MWState::LookupCompletion, void>(
         nullptr,
@@ -388,8 +411,9 @@ void MWTxn::Prepare()
 void MWTxn::WriteRow(TxnRow vhandle)
 {
   auto dbv = vhandle.Read<Ycsb::Value>();
-  dbv.v.assign(Client::zero_data, 100);
-  dbv.v.resize_junk(999);
+//  dbv.v.assign(Client::zero_data, 100);
+//  dbv.v.resize_junk(999);
+  dbv.v.assign("MWTxn ECE496" + std::to_string(vhandle.serial_id()));
   vhandle.Write(dbv);
 }
 
@@ -554,24 +578,23 @@ namespace verification{
          */
         assert(ycsb::Client::g_extra_read == 0);
         assert(!ycsb::Client::g_dependency);
-        for (int i = 0; i < ycsb::kTotal; i++){
+        for (int i = 0; i < ycsb::kTotal - 1; i++){
             auto value = util::Instance<YcsbVerificator>().table.Get(this->input.keys[i]);
-//        value->assign(Client::zero_data, 100);
-//        value->resize_junk(999);
             auto row = value->ToType<ycsb::Ycsb::Value>();
-            row.v.assign(ycsb::Client::zero_data, 100);
-            row.v.resize_junk(999);
+            std::string row_value = "RMWTxn ECE496" + std::to_string(this->sid);
+            row.v.assign(row_value);
+            util::Instance<YcsbVerificator>().table.Update(this->input.keys[i], row.Encode());
         }
         auto value = util::Instance<YcsbVerificator>().table.Get(this->input.keys[ycsb::kTotal - 1]);
         auto row = value->ToType<ycsb::Ycsb::Value>();
-        row.v.assign(ycsb::Client::zero_data, 100);
-        row.v.resize_junk(999);
+        std::string row_value = "RMWTxn ECE496" + std::to_string(this->sid);
+        row.v.assign(row_value);
+        util::Instance<YcsbVerificator>().table.Update(this->input.keys[ycsb::kTotal - 1], row.Encode());
     }
 
     VerificationTxnKeys RMWVerificationTxn::GetTxnKeys() {
         return VerificationTxnKeys{input.keys, ycsb::kTotal};
     }
-
 
     void MWVerificationTxn::Run() {
         /**
@@ -583,8 +606,11 @@ namespace verification{
         for (int i = 0; i < ycsb::kTotal; i++){
             auto value = util::Instance<YcsbVerificator>().table.Get(this->input.keys[i]);
             auto row = value->ToType<ycsb::Ycsb::Value>();
-            row.v.assign(ycsb::Client::zero_data, 100);
-            row.v.resize_junk(999);
+//            row.v.assign(ycsb::Client::zero_data, 100);
+//            row.v.resize_junk(999);
+            std::string row_value = "MWTxn ECE496" + std::to_string(this->sid);
+            row.v.assign(row_value);
+            util::Instance<YcsbVerificator>().table.Update(this->input.keys[i], row.Encode());
         }
     }
 

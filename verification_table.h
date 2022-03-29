@@ -14,7 +14,9 @@ namespace verification {
 
     class VerificationTxn {
     public:
+        virtual ~VerificationTxn() = 0;
         virtual VerificationTxnKeys GetTxnKeys() = 0;
+//        virtual uint64_t GetSerialId() = 0;
         virtual void Run() = 0;
     };
 

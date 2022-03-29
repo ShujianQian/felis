@@ -34,8 +34,11 @@ namespace verification {
     }
 
     void YcsbVerificator::ExecuteEpoch() {
-        for (auto const& pair: *util::Instance<VerificationTxnCollector>().GetTxns()) {
+        std::map<uint64_t, VerificationTxn*>* txns = util::Instance<VerificationTxnCollector>().GetTxns();
+        logger->info("Performing Execution of Verification DB");
+        for (auto const& pair: *txns) {
             VerificationTxn* txn = pair.second;
+//            logger->info("Serial ID: {}", pair.first);
             txn->Run();
         }
     }
@@ -43,8 +46,10 @@ namespace verification {
     void YcsbVerificator::VerifyDatabaseState() {
         void *buf = alloca(512);
         std::map<uint64_t, VerificationTxn*>* txns = util::Instance<VerificationTxnCollector>().GetTxns();
+        logger->info("Performing Verification on {} Transactions", txns->size());
         for (auto const& pair: *txns) {
             VerificationTxn* txn = pair.second;
+//            logger->info("Verify Txn {}", pair.first);
             VerifyKeysOfTxn(txn, buf);
         }
         logger->info("Successfully verified epoch");

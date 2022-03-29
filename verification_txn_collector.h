@@ -17,6 +17,7 @@ namespace verification{
     };
 
     class VerificationTxnCollector {
+    std::mutex collection_mutex;
     std::map<uint64_t, VerificationTxn*> txns;
     public:
         void CollectTxn(uint64_t sid, VerificationTxn* txn);

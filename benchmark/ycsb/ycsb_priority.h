@@ -27,8 +27,10 @@ namespace verification{
     class PriorityMWVerificationTxn : public VerificationTxn {
     private:
         felis::MWTxnInput input;
+        uint64_t sid;
     public:
         PriorityMWVerificationTxn(felis::MWTxnInput input):input(input){};
+        ~PriorityMWVerificationTxn(){};
         void Run() override;
         VerificationTxnKeys GetTxnKeys() override final;
     };

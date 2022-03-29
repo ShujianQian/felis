@@ -85,8 +85,10 @@ namespace verification{
     class RMWVerificationTxn : public VerificationTxn {
     private:
         ycsb::RMWStruct input;
+        uint64_t sid;
     public:
-        RMWVerificationTxn(ycsb::RMWStruct input):input(input){};
+        RMWVerificationTxn(ycsb::RMWStruct input, uint64_t sid):input(input),sid(sid){};
+        ~RMWVerificationTxn(){};
         void Run() override;
         VerificationTxnKeys GetTxnKeys() override final;
     };
@@ -94,8 +96,10 @@ namespace verification{
     class MWVerificationTxn : public VerificationTxn {
     private:
         ycsb::MWStruct input;
+        uint64_t sid;
     public:
-        MWVerificationTxn(ycsb::MWStruct input):input(input){};
+        MWVerificationTxn(ycsb::MWStruct input, uint64_t sid):input(input),sid(sid){};
+        ~MWVerificationTxn(){};
         void Run() override;
         VerificationTxnKeys GetTxnKeys() override final;
     };

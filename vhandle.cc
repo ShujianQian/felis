@@ -382,7 +382,7 @@ VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
 VarStr *SortedArrayVHandle::ReadExactVersion(unsigned int version_idx)
 {
   assert(size > 0);
-  assert(size < capacity);
+  assert(size <= capacity);
   assert(version_idx < size);
 
   auto objects = versions + capacity;
