@@ -108,6 +108,24 @@ struct PriInitQueueTime {
   void operator()() const;
 };
 
+struct PriInitQueueTimeInsert {
+    uint64_t time;
+    uint64_t sid;
+    void operator()() const;
+};
+
+struct PriInitQueueTimeInitialize {
+    uint64_t time;
+    uint64_t sid;
+    void operator()() const;
+};
+
+struct PriInitQueueTimeExecute {
+    uint64_t time;
+    uint64_t sid;
+    void operator()() const;
+};
+
 struct PriInitTime {
   uint64_t succ_time;
   uint64_t fail_time;
@@ -122,12 +140,50 @@ struct PriExecQueueTime {
   void operator()() const;
 };
 
+struct PriExecQueueTimeInsert {
+    uint64_t time;
+    uint64_t sid;
+    void operator()() const;
+};
+
+struct PriExecQueueTimeInitialize {
+    uint64_t time;
+    uint64_t sid;
+    void operator()() const;
+};
+
+struct PriExecQueueTimeExecute {
+    uint64_t time;
+    uint64_t sid;
+    void operator()() const;
+};
+
 struct PriExecTime {
   uint64_t time;
   uint64_t total_latency;
   uint64_t sid;
   void operator()() const;
 };
+
+
+struct PriTotalLatencyInsert {
+    uint64_t time;
+    uint64_t sid;
+    void operator()() const;
+};
+
+struct PriTotalLatencyInitialize {
+    uint64_t time;
+    uint64_t sid;
+    void operator()() const;
+};
+
+struct PriTotalLatencyExecute {
+    uint64_t time;
+    uint64_t sid;
+    void operator()() const;
+};
+
 
 struct PieceTime {
   uint64_t time;
@@ -161,9 +217,18 @@ struct Distance {
   PROBE_PROXY(felis::probes::TpccPayment);                                     \
   PROBE_PROXY(felis::probes::TpccDelivery);                                    \
   PROBE_PROXY(felis::probes::PriInitQueueTime);                                \
+  PROBE_PROXY(felis::probes::PriInitQueueTimeInsert);                          \
+  PROBE_PROXY(felis::probes::PriInitQueueTimeInitialize);                      \
+  PROBE_PROXY(felis::probes::PriInitQueueTimeExecute);                         \
   PROBE_PROXY(felis::probes::PriInitTime);                                     \
   PROBE_PROXY(felis::probes::PriExecQueueTime);                                \
+  PROBE_PROXY(felis::probes::PriExecQueueTimeInsert);                          \
+  PROBE_PROXY(felis::probes::PriExecQueueTimeInitialize);                      \
+  PROBE_PROXY(felis::probes::PriExecQueueTimeExecute);                         \
   PROBE_PROXY(felis::probes::PriExecTime);                                     \
+  PROBE_PROXY(felis::probes::PriTotalLatencyInsert);                           \
+  PROBE_PROXY(felis::probes::PriTotalLatencyInitialize);                       \
+  PROBE_PROXY(felis::probes::PriTotalLatencyExecute);                          \
   PROBE_PROXY(felis::probes::PieceTime);                                       \
   PROBE_PROXY(felis::probes::Distance);
 

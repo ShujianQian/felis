@@ -35,6 +35,18 @@ static struct ProbeMain {
   agg::Agg<agg::Max<std::tuple<uint64_t, int>>> init_queue_max;
   agg::Agg<agg::Histogram<512, 0, 2>> init_queue_hist;
 
+    agg::Agg<agg::Average> init_queue_avg_insert;
+    agg::Agg<agg::Max<std::tuple<uint64_t, int>>> init_queue_max_insert;
+    agg::Agg<agg::Histogram<512, 0, 2>> init_queue_hist_insert;
+
+    agg::Agg<agg::Average> init_queue_avg_initialize;
+    agg::Agg<agg::Max<std::tuple<uint64_t, int>>> init_queue_max_initialize;
+    agg::Agg<agg::Histogram<512, 0, 2>> init_queue_hist_initialize;
+
+    agg::Agg<agg::Average> init_queue_avg_execute;
+    agg::Agg<agg::Max<std::tuple<uint64_t, int>>> init_queue_max_execute;
+    agg::Agg<agg::Histogram<512, 0, 2>> init_queue_hist_execute;
+
   agg::Agg<agg::Average> init_fail_avg;
   agg::Agg<agg::Max<std::tuple<uint64_t, int>>> init_fail_max;
   agg::Agg<agg::Histogram<512, 0, 1>> init_fail_hist;
@@ -51,6 +63,15 @@ static struct ProbeMain {
   agg::Agg<agg::Average> exec_queue_avg;
   agg::Agg<agg::Max<std::tuple<uint64_t, int>>> exec_queue_max;
   agg::Agg<agg::Histogram<1024, 0, 2>> exec_queue_hist;
+    agg::Agg<agg::Average> exec_queue_avg_insert;
+    agg::Agg<agg::Max<std::tuple<uint64_t, int>>> exec_queue_max_insert;
+    agg::Agg<agg::Histogram<1024, 0, 2>> exec_queue_hist_insert;
+    agg::Agg<agg::Average> exec_queue_avg_initialize;
+    agg::Agg<agg::Max<std::tuple<uint64_t, int>>> exec_queue_max_initialize;
+    agg::Agg<agg::Histogram<1024, 0, 2>> exec_queue_hist_initialize;
+    agg::Agg<agg::Average> exec_queue_avg_execute;
+    agg::Agg<agg::Max<std::tuple<uint64_t, int>>> exec_queue_max_execute;
+    agg::Agg<agg::Histogram<1024, 0, 2>> exec_queue_hist_execute;
 
   agg::Agg<agg::Average> exec_avg;
   agg::Agg<agg::Max<std::tuple<uint64_t, int>>> exec_max;
@@ -59,6 +80,15 @@ static struct ProbeMain {
   agg::Agg<agg::Average> total_latency_avg;
   agg::Agg<agg::Max<std::tuple<uint64_t, int>>> total_latency_max;
   agg::Agg<agg::SpecialHistogram> total_latency_hist;
+    agg::Agg<agg::Average> total_latency_avg_insert;
+    agg::Agg<agg::Max<std::tuple<uint64_t, int>>> total_latency_max_insert;
+    agg::Agg<agg::Histogram<1024, 0, 2>> total_latency_hist_insert;
+    agg::Agg<agg::Average> total_latency_avg_initialize;
+    agg::Agg<agg::Max<std::tuple<uint64_t, int>>> total_latency_max_initialize;
+    agg::Agg<agg::Histogram<1024, 0, 2>> total_latency_hist_initialize;
+    agg::Agg<agg::Average> total_latency_avg_execute;
+    agg::Agg<agg::Max<std::tuple<uint64_t, int>>> total_latency_max_execute;
+    agg::Agg<agg::Histogram<1024, 0, 2>> total_latency_hist_execute;
 
   agg::Agg<agg::Average> piece_avg;
   agg::Agg<agg::Max<std::tuple<uint64_t, uintptr_t, int>>> piece_max;
@@ -92,6 +122,15 @@ thread_local struct ProbePerCore {
   AGG(init_queue_avg);
   AGG(init_queue_max);
   AGG(init_queue_hist);
+    AGG(init_queue_avg_insert);
+    AGG(init_queue_max_insert);
+    AGG(init_queue_hist_insert);
+    AGG(init_queue_avg_initialize);
+    AGG(init_queue_max_initialize);
+    AGG(init_queue_hist_initialize);
+    AGG(init_queue_avg_execute);
+    AGG(init_queue_max_execute);
+    AGG(init_queue_hist_execute);
   AGG(init_fail_avg);
   AGG(init_fail_max);
   AGG(init_fail_hist);
@@ -105,12 +144,30 @@ thread_local struct ProbePerCore {
   AGG(exec_queue_avg);
   AGG(exec_queue_max);
   AGG(exec_queue_hist);
+    AGG(exec_queue_avg_insert);
+    AGG(exec_queue_max_insert);
+    AGG(exec_queue_hist_insert);
+    AGG(exec_queue_avg_initialize);
+    AGG(exec_queue_max_initialize);
+    AGG(exec_queue_hist_initialize);
+    AGG(exec_queue_avg_execute);
+    AGG(exec_queue_max_execute);
+    AGG(exec_queue_hist_execute);
   AGG(exec_avg);
   AGG(exec_max);
   AGG(exec_hist);
   AGG(total_latency_avg);
   AGG(total_latency_max);
   AGG(total_latency_hist);
+    AGG(total_latency_avg_insert);
+    AGG(total_latency_max_insert);
+    AGG(total_latency_hist_insert);
+    AGG(total_latency_avg_initialize);
+    AGG(total_latency_max_initialize);
+    AGG(total_latency_hist_initialize);
+    AGG(total_latency_avg_execute);
+    AGG(total_latency_max_execute);
+    AGG(total_latency_hist_execute);
   AGG(piece_avg);
   AGG(piece_max);
   AGG(piece_hist);
@@ -237,6 +294,30 @@ template <> void OnProbe(felis::probes::PriInitQueueTime p)
   statcnt.init_queue_max.addData(p.time, std::make_tuple(p.sid, core_id));
 }
 
+template <> void OnProbe(felis::probes::PriInitQueueTimeInsert p)
+{
+    int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+    statcnt.init_queue_avg_insert << p.time;
+    statcnt.init_queue_hist_insert << p.time;
+    statcnt.init_queue_max_insert.addData(p.time, std::make_tuple(p.sid, core_id));
+}
+
+template <> void OnProbe(felis::probes::PriInitQueueTimeInitialize p)
+{
+    int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+    statcnt.init_queue_avg_initialize << p.time;
+    statcnt.init_queue_hist_initialize << p.time;
+    statcnt.init_queue_max_initialize.addData(p.time, std::make_tuple(p.sid, core_id));
+}
+
+template <> void OnProbe(felis::probes::PriInitQueueTimeExecute p)
+{
+    int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+    statcnt.init_queue_avg_execute << p.time;
+    statcnt.init_queue_hist_execute << p.time;
+    statcnt.init_queue_max_execute.addData(p.time, std::make_tuple(p.sid, core_id));
+}
+
 template <> void OnProbe(felis::probes::PriInitTime p)
 {
   int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
@@ -264,6 +345,29 @@ template <> void OnProbe(felis::probes::PriExecQueueTime p)
   statcnt.exec_queue_max.addData(p.time, std::make_tuple(p.sid, core_id));
 }
 
+template <> void OnProbe(felis::probes::PriExecQueueTimeInsert p) {
+    int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+    statcnt.exec_queue_avg_insert << p.time;
+    statcnt.exec_queue_hist_insert << p.time;
+    statcnt.exec_queue_max_insert.addData(p.time, std::make_tuple(p.sid, core_id));
+}
+
+template <> void OnProbe(felis::probes::PriExecQueueTimeInitialize p)
+{
+    int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+    statcnt.exec_queue_avg_initialize << p.time;
+    statcnt.exec_queue_hist_initialize << p.time;
+    statcnt.exec_queue_max_initialize.addData(p.time, std::make_tuple(p.sid, core_id));
+}
+
+template <> void OnProbe(felis::probes::PriExecQueueTimeExecute p)
+{
+    int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+    statcnt.exec_queue_avg_execute << p.time;
+    statcnt.exec_queue_hist_execute << p.time;
+    statcnt.exec_queue_max_execute.addData(p.time, std::make_tuple(p.sid, core_id));
+}
+
 template <> void OnProbe(felis::probes::PriExecTime p)
 {
   int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
@@ -281,6 +385,29 @@ template <> void OnProbe(felis::probes::PieceTime p)
   statcnt.piece_avg << p.time;
   statcnt.piece_hist << p.time;
   statcnt.piece_max.addData(p.time, std::make_tuple(p.sid, p.addr, core_id));
+}
+
+template <> void OnProbe(felis::probes::PriTotalLatencyInsert p) {
+    int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+    statcnt.total_latency_avg_insert << p.time;
+    statcnt.total_latency_hist_insert << p.time;
+    statcnt.total_latency_max_insert.addData(p.time, std::make_tuple(p.sid, core_id));
+}
+
+template <> void OnProbe(felis::probes::PriTotalLatencyInitialize p)
+{
+    int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+    statcnt.total_latency_avg_initialize << p.time;
+    statcnt.total_latency_hist_initialize << p.time;
+    statcnt.total_latency_max_initialize.addData(p.time, std::make_tuple(p.sid, core_id));
+}
+
+template <> void OnProbe(felis::probes::PriTotalLatencyExecute p)
+{
+    int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+    statcnt.total_latency_avg_execute << p.time;
+    statcnt.total_latency_hist_execute << p.time;
+    statcnt.total_latency_max_execute.addData(p.time, std::make_tuple(p.sid, core_id));
 }
 
 template <> void OnProbe(felis::probes::Distance p)
@@ -359,6 +486,24 @@ ProbeMain::~ProbeMain()
     std::cout << global.init_queue_hist();
   }
 
+    if (global.init_queue_avg_insert().getCnt() != 0) {
+        std::cout << "[Pri-stat] init_queue_insert " << global.init_queue_avg_insert() << " us "
+                  << "(max: " << global.init_queue_max_insert() << ")" << std::endl;
+        std::cout << global.init_queue_hist_insert();
+    }
+
+    if (global.init_queue_avg_initialize().getCnt() != 0) {
+        std::cout << "[Pri-stat] init_queue_initialize " << global.init_queue_avg_initialize() << " us "
+                  << "(max: " << global.init_queue_max_initialize() << ")" << std::endl;
+        std::cout << global.init_queue_hist_initialize();
+    }
+
+    if (global.init_queue_avg_execute().getCnt() != 0) {
+        std::cout << "[Pri-stat] init_queue_execute " << global.init_queue_avg_execute() << " us "
+                  << "(max: " << global.init_queue_max_execute() << ")" << std::endl;
+        std::cout << global.init_queue_hist_execute();
+    }
+
   if (global.init_fail_avg().getCnt() != 0) {
     std::cout << "[Pri-stat] init_fail " << global.init_fail_avg() << " us "
               << "(max: " << global.init_fail_max() << ")" << std::endl;
@@ -384,6 +529,24 @@ ProbeMain::~ProbeMain()
     std::cout << global.exec_queue_hist();
   }
 
+    if (global.exec_queue_avg_insert().getCnt() != 0) {
+        std::cout << "[Pri-stat] exec_queue_insert " << global.exec_queue_avg_insert() << " us "
+                  << "(max: " << global.exec_queue_max_insert() << ")" << std::endl;
+        std::cout << global.exec_queue_hist_insert();
+    }
+
+    if (global.exec_queue_avg_initialize().getCnt() != 0) {
+        std::cout << "[Pri-stat] exec_queue_initialize " << global.exec_queue_avg_initialize() << " us "
+                  << "(max: " << global.exec_queue_max_initialize() << ")" << std::endl;
+        std::cout << global.exec_queue_hist_initialize();
+    }
+
+    if (global.exec_queue_avg_execute().getCnt() != 0) {
+        std::cout << "[Pri-stat] exec_queue_execute " << global.exec_queue_avg_execute() << " us "
+                  << "(max: " << global.exec_queue_max_execute() << ")" << std::endl;
+        std::cout << global.exec_queue_hist_execute();
+    }
+
   if (global.exec_avg().getCnt() != 0) {
     std::cout << "[Pri-stat] exec " << global.exec_avg() << " us "
               << "(max: " << global.exec_max() << ")" << std::endl;
@@ -396,7 +559,26 @@ ProbeMain::~ProbeMain()
     std::cout << global.total_latency_hist();
   }
 
-  if (global.dist_global_avg().getCnt() != 0) {
+    if (global.total_latency_avg_insert().getCnt() != 0) {
+        std::cout << "[Pri-stat] total_latency_insert " << global.total_latency_avg_insert() << " us "
+                  << "(max: " << global.total_latency_max_insert() << ")" << std::endl;
+        std::cout << global.total_latency_hist_insert();
+    }
+
+    if (global.total_latency_avg_initialize().getCnt() != 0) {
+        std::cout << "[Pri-stat] total_latency_initialize " << global.total_latency_avg_initialize() << " us "
+                  << "(max: " << global.total_latency_max_initialize() << ")" << std::endl;
+        std::cout << global.total_latency_hist_initialize();
+    }
+
+    if (global.total_latency_avg_execute().getCnt() != 0) {
+        std::cout << "[Pri-stat] total_latency_execute " << global.total_latency_avg_execute() << " us "
+                  << "(max: " << global.total_latency_max_execute() << ")" << std::endl;
+        std::cout << global.total_latency_hist_execute();
+    }
+
+
+    if (global.dist_global_avg().getCnt() != 0) {
     std::cout << "[Pri-stat] global dist " << global.dist_global_avg() << " sids "
               << "(max: " << global.dist_global_max() << ")" << std::endl;
     std::cout << global.dist_global_hist();

@@ -88,11 +88,21 @@ bool MWTxn_Run(PriorityTxn *txn)
   txn->measure_tsc = succ_tsc;
   probes::PriInitQueueTime{init_q, txn->serial_id()}(); // recorded before
   probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
-  if (give_up) {
+  EpochPhase curr_phase = util::Instance<EpochManager>().current_phase();
+    if (curr_phase == EpochPhase::Insert) {
+        probes::PriInitQueueTimeInsert{init_q, txn->serial_id()}(); // recorded before
+    }
+    if (curr_phase == EpochPhase::Initialize) {
+        probes::PriInitQueueTimeInitialize{init_q, txn->serial_id()}(); // recorded before
+    }
+    if (curr_phase == EpochPhase::Execute) {
+        probes::PriInitQueueTimeExecute{init_q, txn->serial_id()}(); // recorded before
+    }
+    if (give_up) {
 
       trace(TRACE_IPPT "Batch count already reached 0, give up");
       return false;
-  }
+    }
 
   struct Context {
     int nr;
@@ -108,13 +118,23 @@ bool MWTxn_Run(PriorityTxn *txn)
         [](std::tuple<Context> capture) {
           auto [ctx] = capture;
           auto piece_id = ctx.txn->piece_count.fetch_sub(1);
+            EpochPhase curr_phase = util::Instance<EpochManager>().current_phase();
           INIT_ROUTINE_BRK(4096);
 
-          // record exec queue time
+            // record exec queue time
           if (piece_id == ctx.nr) {
             auto queue_tsc = __rdtsc();
             auto diff = queue_tsc - ctx.txn->measure_tsc;
             probes::PriExecQueueTime{diff / 2200, ctx.txn->serial_id()}();
+              if (curr_phase == EpochPhase::Insert) {
+                  probes::PriExecQueueTimeInsert{diff / 2200, ctx.txn->serial_id()}(); // recorded before
+              }
+              if (curr_phase == EpochPhase::Initialize) {
+                  probes::PriExecQueueTimeInitialize{diff / 2200, ctx.txn->serial_id()}(); // recorded before
+              }
+              if (curr_phase == EpochPhase::Execute) {
+                  probes::PriExecQueueTimeExecute{diff / 2200, ctx.txn->serial_id()}(); // recorded before
+              }
             ctx.txn->measure_tsc = queue_tsc;
           }
 
@@ -129,6 +149,15 @@ bool MWTxn_Run(PriorityTxn *txn)
             auto exec = exec_tsc - ctx.txn->measure_tsc;
             auto total = exec_tsc - (ctx.txn->delay + PriorityTxnService::g_tsc);
             probes::PriExecTime{exec / 2200, total / 2200, ctx.txn->serial_id()}();
+              if (curr_phase == EpochPhase::Insert) {
+                  probes::PriTotalLatencyInsert{total / 2200, ctx.txn->serial_id()}(); // recorded before
+              }
+              if (curr_phase == EpochPhase::Initialize) {
+                  probes::PriTotalLatencyInitialize{total / 2200, ctx.txn->serial_id()}(); // recorded before
+              }
+              if (curr_phase == EpochPhase::Execute) {
+                  probes::PriTotalLatencyExecute{total / 2200, ctx.txn->serial_id()}(); // recorded before
+              }
           }
 
           auto core_id = go::Scheduler::CurrentThreadPoolId() - 1;

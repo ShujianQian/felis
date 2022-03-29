@@ -265,8 +265,11 @@ void CallTxnsWorker::initialization_phase_run()
     PieceRoutine *next_r;
     go::Scheduler *sched = scheduler();
 
+//    EpochPhase curr_phase = util::Instance<EpochManager>().current_phase();
+//    if (curr_phase != EpochPhase::Insert) {
     const uint64_t epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
     util::Instance<PriorityTxnService>().UpdateEpochStartTime(epoch_nr);
+//    }
 
     auto should_pop_pri =
             PromiseRoutineDispatchService::GenericDispatchPeekListener(
@@ -303,6 +306,7 @@ void CallTxnsWorker::initialization_phase_run()
         if (core_id == 0) {
             trace(TRACE_IPPT "At the beginning of init_phase_run_while");
         }
+//        if (curr_phase != EpochPhase::Insert) {
         if (svc.Peek(core_id, should_pop_pri)) {
             if (core_id == 0) {
                 trace(TRACE_IPPT "Should pop pri");
@@ -331,6 +335,7 @@ void CallTxnsWorker::initialization_phase_run()
         if (core_id == 0) {
             trace(TRACE_IPPT "Falling back to run batch");
         }
+//        }
 
         if (batch_txn_cnt < batch_txn_set->nr) {
             batch_txn = batch_txn_set->txns[batch_txn_cnt];
@@ -411,7 +416,9 @@ void CallTxnsWorker::initialization_phase_run()
                 mem::GetDataRegion().Quiescence();
             } else if (client->callback.phase == EpochPhase::Initialize) {
             } else if (client->callback.phase == EpochPhase::Insert) {
+//                uint64_t tsc = __rdtsc();
                 util::Instance<GC>().RunGC();
+//                logger->info("core {} gc took {}us.", core_id, ((double) __rdtsc() - tsc) / 2200);
             }
 
             trace(TRACE_COMPLETION
@@ -646,6 +653,7 @@ void EpochClient::OnInsertComplete()
 
 void EpochClient::OnInitializeComplete()
 {
+//    uint64_t tsc = __rdtsc();
 
     if (NodeConfiguration::g_priority_txn) {
         auto &svc = util::Instance<PriorityTxnService>();
@@ -684,6 +692,8 @@ void EpochClient::OnInitializeComplete()
   }
 
   auto &mgr = util::Instance<EpochManager>();
+
+//    logger->info("on initialize complete took {}us.", ((double) __rdtsc() - tsc) / 2200);
 
   CallTxns(
       util::Instance<EpochManager>().current_epoch_nr(),
