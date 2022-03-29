@@ -108,6 +108,7 @@ class NodeConfiguration {
  public:
   static size_t g_nr_threads;
   static constexpr size_t kMaxNrThreads = 32;
+  static bool g_enable_ippt;
   static bool g_data_migration;
   static bool g_priority_txn;
   static bool g_priority_batch_mode;

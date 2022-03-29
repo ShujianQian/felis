@@ -821,4 +821,27 @@ void PriorityTxn::Rollback(VHandle **update_handles, int update_cnt, int usize, 
   }
 }
 
+std::array<PriorityTxnExecutionStats, NodeConfiguration::kMaxNrThreads>& PriorityTxnStatistics::GetStatisticForEpoch(int epoch) {
+    return statistics_per_epoch[epoch - 1];
+}
+
+void PriorityTxnStatistics::AddEpoch() {
+    statistics_per_epoch.push_back({});
+}
+
+void PriorityTxnStatistics::PrintStats(int epoch) {
+
+    for(int i = 0; i < NodeConfiguration::g_nr_threads;i++){
+        logger->info("EPPT Executed: {} core {}", statistics_per_epoch[epoch - 1][i].eppt_executed, i);
+    }
+    for(int i = 0; i < NodeConfiguration::g_nr_threads;i++){
+        logger->info("IPPT Executed: {} core {}", statistics_per_epoch[epoch - 1][i].ippt_executed, i);
+    }
+    for(int i = 0; i < NodeConfiguration::g_nr_threads;i++){
+        logger->info("EPPT Skipped: {} core {}", statistics_per_epoch[epoch - 1][i].eppt_skipped, i);
+    }
+    for(int i = 0; i < NodeConfiguration::g_nr_threads;i++) {
+        logger->info("IPPT Skipped: {} core {}", statistics_per_epoch[epoch - 1][i].ippt_skipped, i);
+    }
+}
 } // namespace felis

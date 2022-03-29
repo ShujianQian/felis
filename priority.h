@@ -9,6 +9,22 @@
 namespace felis {
 
 class PriorityTxn;
+struct PriorityTxnExecutionStats {
+    uint64_t eppt_executed;
+    uint64_t ippt_executed;
+    uint64_t eppt_skipped;
+    uint64_t ippt_skipped;
+};
+
+class PriorityTxnStatistics {
+    std::vector<std::array<PriorityTxnExecutionStats, NodeConfiguration::kMaxNrThreads>> statistics_per_epoch;
+public:
+    PriorityTxnStatistics():statistics_per_epoch({{}}){};
+    void AddEpoch();
+    std::array<PriorityTxnExecutionStats, NodeConfiguration::kMaxNrThreads> & GetStatisticForEpoch(int epoch);
+    void PrintStats(int epoch);
+};
+
 
 class PriorityTxnService {
   friend class PriorityTxn;
@@ -21,6 +37,7 @@ class PriorityTxnService {
   util::SpinLock lock; // for global_last_sid
 
  public:
+    PriorityTxnStatistics stats;
   class Bitmap {
     std::vector<bool> bitset;
     size_t size;

@@ -191,6 +191,7 @@ void BasePieceCollection::ExecutionRoutine::Run()
 
   PieceRoutine *next_r;
   go::Scheduler *sched = scheduler();
+    int epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
 
   auto should_pop = PromiseRoutineDispatchService::GenericDispatchPeekListener(
       [&next_r, sched]
@@ -250,6 +251,7 @@ void BasePieceCollection::ExecutionRoutine::Run()
     if (svc.Peek(core_id, txn)) {
       txn->Run();
       svc.Complete(core_id, PromiseRoutineDispatchService::CompleteType::PriorityInit);
+      util::Instance<PriorityTxnService>().stats.GetStatisticForEpoch(epoch_nr )[core_id].eppt_executed++;
       continue;
     }
 

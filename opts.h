@@ -133,6 +133,8 @@ struct Options {
   static inline const auto kPriorityBatchMode = Option("PriorityBatchMode");
 
   static inline const auto kTxnQueueLength = Option("TxnQueueLength");
+  static inline const auto kEnableIPPT = Option("EnableIPPT");
+    static inline const auto kEnableVerification = Option("EnableVerification");
 
   static inline bool ParseExtentedOptions(std::string arg)
   {

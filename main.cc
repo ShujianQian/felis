@@ -108,7 +108,12 @@ int main(int argc, char *argv[])
     NodeConfiguration::g_priority_batch_mode_pct = Options::kPercentagePriorityTxn.ToInt();
   }
 
-  if(EpochClient::g_perform_verification){
+    if (Options::kEnableIPPT){
+        NodeConfiguration::g_enable_ippt = true;
+    }
+
+  if (Options::kEnableVerification){
+      EpochClient::g_perform_verification = true;
       util::InstanceInit<verification::YcsbVerificator>();
       util::InstanceInit<verification::VerificationTxnCollector>();
   }

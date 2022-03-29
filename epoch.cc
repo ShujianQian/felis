@@ -31,7 +31,7 @@ bool EpochClient::g_enable_granola = false;
 bool EpochClient::g_enable_pwv = false;
 long EpochClient::g_corescaling_threshold = 0;
 long EpochClient::g_splitting_threshold = std::numeric_limits<long>::max();
-bool EpochClient::g_perform_verification = true;
+bool EpochClient::g_perform_verification = false;
 size_t EpochClient::g_txn_per_epoch = 100000;
 
 void EpochCallback::operator()(unsigned long cnt)
@@ -216,8 +216,8 @@ void EpochClient::Start()
   logger->info("load percentage {}%", LoadPercentage());
 
   perf = PerfLog();
+  util::Instance<EpochManager>().DoAdvance(this);
   if(EpochClient::g_perform_verification){
-      util::Instance<EpochManager>().DoAdvance(this);
       util::Instance<verification::YcsbVerificator>().InitializeExperiment();
   }
   go::GetSchedulerFromPool(0)->WakeUp(&control);
@@ -268,7 +268,7 @@ void CallTxnsWorker::initialization_phase_run()
     trace(TRACE_EXEC_ROUTINE
           "new ExecutionRoutine up and running on {}",
           core_id);
-
+    int epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
     PieceRoutine *next_r;
     go::Scheduler *sched = scheduler();
 
@@ -307,7 +307,7 @@ void CallTxnsWorker::initialization_phase_run()
         if (core_id == 0) {
             trace(TRACE_IPPT "At the beginning of init_phase_run_while");
         }
-        if (svc.Peek(core_id, should_pop_pri)) {
+        if (NodeConfiguration::g_enable_ippt && svc.Peek(core_id, should_pop_pri)) {
             if (core_id == 0) {
                 trace(TRACE_IPPT "Should pop pri");
             }
@@ -321,13 +321,14 @@ void CallTxnsWorker::initialization_phase_run()
             continue;
         }
 
-        if (svc.Peek_IPPT(core_id, txn, (int) (batch_length - batch_txn_cnt), false)) {
+        if (NodeConfiguration::g_enable_ippt && svc.Peek_IPPT(core_id, txn, (int) (batch_length - batch_txn_cnt), false)) {
             if (core_id == 0) {
                 trace(TRACE_IPPT "Should pop txn");
             }
             txn->Run();
             svc.Complete(core_id,
                          PromiseRoutineDispatchService::CompleteType::PriorityInit);
+            util::Instance<PriorityTxnService>().stats.GetStatisticForEpoch(epoch_nr )[core_id].ippt_executed++;
             continue;
         }
         // trace(TRACE_IPPT "Core {} Phase {}", t, client->callback.phase);
@@ -758,11 +759,13 @@ void EpochClient::OnExecuteComplete()
   }
 
   if (cur_epoch_nr + 1 < g_max_epoch) {
+    util::Instance<PriorityTxnService>().stats.PrintStats(cur_epoch_nr);
     if(EpochClient::g_perform_verification){
       util::Instance<verification::YcsbVerificator>().ExecuteEpoch();
       util::Instance<verification::YcsbVerificator>().VerifyDatabaseState();
       util::Instance<verification::VerificationTxnCollector>().ClearTxns();
     }
+    util::Instance<PriorityTxnService>().stats.AddEpoch();
     InitializeEpoch();
     util::Instance<PriorityTxnService>().ClearBitMap();
   } else {

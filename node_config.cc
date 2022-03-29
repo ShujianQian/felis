@@ -162,6 +162,7 @@ bool LocalTransport::TryFlushForCore(int core_id)
   return success;
 }
 
+bool NodeConfiguration::g_enable_ippt = false;
 size_t NodeConfiguration::g_nr_threads = 8;
 bool NodeConfiguration::g_data_migration = false;
 bool NodeConfiguration::g_priority_txn = false;
