@@ -602,8 +602,14 @@ namespace verification{
         }
         auto value = util::Instance<YcsbVerificator>().table.Get(this->input.keys[ycsb::kTotal - 1]);
         auto row = value->ToType<ycsb::Ycsb::Value>();
-        std::string row_value = "RMWTxn ECE496" + std::to_string(this->sid);
-        row.v.assign(row_value);
+//        std::string row_value = "RMWTxn ECE496" + std::to_string(this->sid);
+
+        std::string old_value(row.v.data(), row.v.size());
+        std::string new_value = "RMWTxn ECE496" + std::to_string(
+                std::hash<std::string>{}(
+                        old_value+ std::to_string(this->sid)
+                ));
+        row.v.assign(new_value);
         util::Instance<YcsbVerificator>().table.Update(this->input.keys[ycsb::kTotal - 1], row.Encode());
     }
 
