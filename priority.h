@@ -1,6 +1,9 @@
 #ifndef PRIORITY_H
 #define PRIORITY_H
 
+#include <barrier>
+#include <functional>
+
 #include "epoch.h"
 #include "masstree_index_impl.h"
 #include "sqltypes.h"
@@ -166,11 +169,13 @@ class PriorityTxnService {
 
  public:
   static void PrintStats();
-  static unsigned long long g_tsc;
+  static std::atomic<uint64_t> g_tsc;
+  static std::mutex g_tsc_lock;
     static std::atomic<uint64_t> g_insert_end_tsc;
     static std::atomic<uint64_t> g_initialize_end_tsc;
     static std::atomic<uint64_t> g_initialize_start_tsc;
     static std::atomic<uint64_t> g_execute_start_tsc;
+    static std::atomic<uint64_t> g_execute_end_tsc;
   static int execute_piece_time;
 
  private:

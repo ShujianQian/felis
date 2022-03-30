@@ -44,11 +44,13 @@ bool PriorityTxnService::g_fastest_core = false;
 bool PriorityTxnService::g_priority_preemption = true;
 bool PriorityTxnService::g_tpcc_pin = true;
 
-unsigned long long PriorityTxnService::g_tsc = 0;
-std::atomic<uint64_t> PriorityTxnService::g_insert_end_tsc = 0;
-std::atomic<uint64_t> PriorityTxnService::g_initialize_end_tsc = 0;
+std::atomic<uint64_t> PriorityTxnService::g_tsc = 0;
+std::mutex PriorityTxnService::g_tsc_lock;
+std::atomic<uint64_t> PriorityTxnService::g_insert_end_tsc = std::numeric_limits<uint64_t>::max();
+std::atomic<uint64_t> PriorityTxnService::g_initialize_end_tsc = std::numeric_limits<uint64_t>::max();
 std::atomic<uint64_t> PriorityTxnService::g_initialize_start_tsc = std::numeric_limits<uint64_t>::max();
 std::atomic<uint64_t> PriorityTxnService::g_execute_start_tsc = std::numeric_limits<uint64_t>::max();
+std::atomic<uint64_t> PriorityTxnService::g_execute_end_tsc = std::numeric_limits<uint64_t>::max();
 int PriorityTxnService::execute_piece_time = 0;
 
 mem::ParallelSlabPool BaseInsertKey::pool;
@@ -287,10 +289,10 @@ std::string format_sid(uint64_t sid)
 
 void PriorityTxnService::UpdateEpochStartTime(uint64_t epoch_nr)
 {
+  std::lock_guard<std::mutex> lock_guard(g_tsc_lock);
   uint64_t old_nr = this->epoch_nr.load();
   if (epoch_nr > old_nr) {
-    if (this->epoch_nr.compare_exchange_strong(old_nr, epoch_nr)) {
-        PriorityTxnService::g_tsc = __rdtsc();
+    this->epoch_nr = epoch_nr;
         logger->info("insert end {}, init start {}, init end {}, exec start {}",
                      g_insert_end_tsc.load() / 2200000,
                      g_initialize_start_tsc.load() / 2200000,
@@ -299,9 +301,14 @@ void PriorityTxnService::UpdateEpochStartTime(uint64_t epoch_nr)
         logger->info("diff insert/init {}us diff init/exec {}us",
                      (g_initialize_start_tsc.load() - g_insert_end_tsc.load()) / 2200,
                      (g_execute_start_tsc.load() - g_initialize_end_tsc.load()) / 2200);
-        g_initialize_start_tsc = std::numeric_limits<uint64_t>::max();
-        g_execute_start_tsc = std::numeric_limits<uint64_t>::max();
-    }
+    g_insert_end_tsc = std::numeric_limits<uint64_t>::max();
+    g_initialize_end_tsc = std::numeric_limits<uint64_t>::max();
+      g_execute_end_tsc = std::numeric_limits<uint64_t>::max();
+      g_execute_start_tsc = std::numeric_limits<uint64_t>::max();
+      g_initialize_start_tsc = std::numeric_limits<uint64_t>::max();
+
+    // ensures that only the first thread would reset the g_tsc, and it will be the smallest
+    g_tsc = __rdtsc();
   }
 }
 
@@ -320,10 +327,13 @@ void PriorityTxnService::ReportPhaseEnd(EpochPhase phase) {
     uint64_t tsc = __rdtsc();
     if (phase == EpochPhase::Insert) {
         uint64_t old = g_insert_end_tsc.load();
-        while (old < tsc && !g_insert_end_tsc.compare_exchange_strong(old, tsc));
+        while (old > tsc && !g_insert_end_tsc.compare_exchange_strong(old, tsc));
     } else if (phase == EpochPhase::Initialize) {
         uint64_t old = g_initialize_end_tsc.load();
-        while (old < tsc && !g_initialize_end_tsc.compare_exchange_strong(old, tsc));
+        while (old > tsc && !g_initialize_end_tsc.compare_exchange_strong(old, tsc));
+    } else if (phase == EpochPhase::Execute) {
+        uint64_t old = g_execute_end_tsc.load();
+        while (old > tsc && !g_execute_end_tsc.compare_exchange_strong(old, tsc));
     }
 }
 

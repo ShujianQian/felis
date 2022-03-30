@@ -509,6 +509,9 @@ void CallTxnsWorker::execution_phase_run(){
   finished = true;
   transport.FinishCompletion(0);
 
+  EpochPhase curr_phase = util::Instance<EpochManager>().current_phase();
+  util::Instance<PriorityTxnService>().ReportPhaseEnd(curr_phase);
+
   trace(TRACE_IPPT "Core {} returned from finish completion.", core_id);
 
   // Granola doesn't support out of order scheduling. In the original paper,
@@ -709,7 +712,9 @@ void EpochClient::OnInitializeComplete()
 void EpochClient::OnExecuteComplete()
 {
   stats.execution_time_ms += callback.perf.duration_ms();
-  PriorityTxnService::execute_piece_time += (__rdtsc() - PriorityTxnService::g_tsc) / 2200000;
+    PriorityTxnService::execute_piece_time += (int) (/*PriorityTxnService::g_execute_end_tsc*/__rdtsc() - PriorityTxnService::g_tsc
+            - PriorityTxnService::g_execute_start_tsc + PriorityTxnService::g_initialize_end_tsc
+            - PriorityTxnService::g_initialize_start_tsc + PriorityTxnService::g_insert_end_tsc) / 2200000;
   if (NodeConfiguration::g_priority_txn) {
     auto &svc = util::Instance<PriorityTxnService>();
     for (int i = 0; i < NodeConfiguration::g_nr_threads; ++i) {
