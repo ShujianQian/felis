@@ -391,6 +391,8 @@ void CallTxnsWorker::initialization_phase_run()
                 // workloads. For example, issuing takes a longer time.
                 if ((i & 0xFF) == 0) transport.PrefetchInbound();
             }
+
+
             set_urgent(false);
 
             // Here we set the finished flag a bit earlier, so that FinishCompletion()
