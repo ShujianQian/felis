@@ -93,6 +93,7 @@ namespace verification {
 //            logger->info("Verifying length {} verification {} caracal {}",
 //                          verification_value->length(), verification_value->data(), caracal_value->data());
             if (memcmp(verification_value->data(), real_value->data(), verification_value->length()) != 0) {
+                auto check = caracal_vhandle->VerificatorGetExtraVhandle()->SpyLastVersion();
                 logger->info("Failed Verification. Values in verification and caracal table mismatch");
                 std::abort();
             }

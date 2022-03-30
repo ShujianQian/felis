@@ -192,12 +192,20 @@ VarStr *DoublyLinkedListExtraVHandle::ReadWithVersion(uint64_t sid,
         lock.Unlock(&q_node);
     }
 
+    /**
+     * Last = 6, read-sid = 8
+     * p = [5]<-[9, 10, 11]
+     * This would return 5 and not read from last_batch_obj
+     */
     if (!p) {
         if (curr_phase == EpochPhase::Execute) {
             return nullptr;
         } else {
             return (VarStr *) last_batch_obj;
         }
+    }
+    if(last_batch_version > p->version){
+        return (VarStr *) last_batch_obj;
     }
 
     abort_if(p->version >= sid, "p->version >= sid, {} >= {}", p->version, sid);

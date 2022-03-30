@@ -206,12 +206,12 @@ class SortedArrayVHandle : public BaseVHandle {
   // [0, capacity - 1] stores version number, [capacity, 2 * capacity - 1] stores ptr to data
   uint64_t *versions;
   // util::OwnPtr<RowEntity> row_entity;
-  std::atomic<ExtraVHandle*> extra_vhandle;
   std::atomic_long buf_pos = -1;
   std::atomic<uint64_t> gc_handle = 0;
 
   SortedArrayVHandle();
  public:
+    std::atomic<ExtraVHandle*> extra_vhandle;
 
   static void operator delete(void *ptr) {
     SortedArrayVHandle *phandle = (SortedArrayVHandle *) ptr;
