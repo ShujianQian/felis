@@ -125,10 +125,8 @@ bool MWTxn_Run(PriorityTxn *txn)
 //           std::string value = "priority ECE496" + std::to_string(ctx.txn->serial_id());
 //          row.v.assign(value);
             std::string old_value(row.v.data(), row.v.size());
-            row.v.assign("priority ECE496" + std::to_string(
-                    std::hash<std::string>{}(
-                            old_value+ std::to_string(ctx.txn->serial_id())
-                    )));
+            std::string new_value = old_value + "Priority" + std::to_string(ctx.txn->serial_id());
+            row.v.assign(new_value);
           ctx.txn->Write(ctx.row, row);
 
           // record exec time
@@ -183,10 +181,8 @@ namespace verification{
 //            std::string row_value = "priority ECE496" + std::to_string(this->sid);
 //            row.v.assign(row_value);
             std::string old_value(row.v.data(), row.v.size());
-            row.v.assign("priority ECE496" + std::to_string(
-                    std::hash<std::string>{}(
-                            old_value+ std::to_string(this->sid)
-                    )));
+            std::string new_value = old_value + "Priority" + std::to_string(this->sid);
+            row.v.assign(new_value);
             util::Instance<YcsbVerificator>().table.Update(this->input.keys[i], row.Encode());
         }
     }

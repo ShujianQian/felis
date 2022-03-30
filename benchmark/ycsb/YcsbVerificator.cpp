@@ -90,8 +90,6 @@ namespace verification {
             }
 
 
-//            logger->info("Verifying length {} verification {} caracal {}",
-//                          verification_value->length(), verification_value->data(), caracal_value->data());
             if (memcmp(verification_value->data(), real_value->data(), verification_value->length()) != 0) {
                 auto check = caracal_vhandle->VerificatorGetExtraVhandle()->SpyLastVersion();
                 logger->info("Failed Verification. Values in verification and caracal table mismatch");
@@ -100,42 +98,5 @@ namespace verification {
         }
     }
 
-
-/*    void YcsbVerificator::VerifyDatabaseState() {
-        void *buf = alloca(512);
-        std::map<uint64_t, VerificationTxn*>* txns = util::Instance<VerificationTxnCollector>().GetTxns();
-        for (auto const& pair: *txns) {
-            VerificationTxn* txn = pair.second;
-
-            VerificationTxnKeys list_keys = txn->GetTxnKeys();
-            for (int i = 0; i < list_keys.nr; i++) {
-                ycsb::Ycsb::Key ycsb_key = ycsb::Ycsb::Key::New(list_keys.keys[i]);
-                auto verification_value = this->table.Get(list_keys.keys[i]);
-                if (!verification_value) {
-                    logger->info("Should not occur. Key was not found in verification table");
-                    std::abort();
-                }
-                auto caracal_vhandle = util::Instance<felis::TableManager>().Get<ycsb::Ycsb>().Search(
-                        ycsb_key.EncodeView(buf));
-                uint64_t last_sid = caracal_vhandle->last_version();
-                if (felis::NodeConfiguration::g_priority_txn &&
-                    last_sid < caracal_vhandle->last_priority_version()) {
-                    last_sid = caracal_vhandle->last_priority_version();
-                }
-                auto caracal_value = caracal_vhandle->ReadWithVersion(last_sid);
-                if (!caracal_value) {
-                    logger->info("Failed Verification. Key was not found in caracal table during verification");
-                    std::abort();
-                }
-
-                if (memcmp(verification_value->data(), caracal_value->data(), verification_value->length()) == 0) {
-                    logger->info("Failed Verification. Values in verification and caracal table mismatch");
-                    std::abort();
-                }
-            }
-        }
-
-        logger->info("Successfully verified epoch");
-    }*/
 
 }

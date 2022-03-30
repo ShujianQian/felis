@@ -152,10 +152,8 @@ void RMWTxn::WriteRow(TxnRow vhandle)
 //  dbv.v.assign(Client::zero_data, 100);
 //  dbv.v.resize_junk(999);
     std::string old_value(dbv.v.data(), dbv.v.size());
-  dbv.v.assign("RMWTxn ECE496" + std::to_string(
-          std::hash<std::string>{}(
-                  old_value+ std::to_string(vhandle.serial_id())
-          )));
+    std::string new_value = old_value + "RMWTxn" + std::to_string(vhandle.serial_id());
+    dbv.v.assign(new_value);
     vhandle.Write(dbv);
   //  if(!vhandle.Write(dbv)){
 //      logger->info("Failed write?");
@@ -419,10 +417,8 @@ void MWTxn::WriteRow(TxnRow vhandle)
 //  dbv.v.resize_junk(999);
 //  dbv.v.assign("MWTxn ECE496" + std::to_string(vhandle.serial_id()));
     std::string old_value(dbv.v.data(), dbv.v.size());
-    dbv.v.assign("MWTxn ECE496" + std::to_string(
-            std::hash<std::string>{}(
-                    old_value+ std::to_string(vhandle.serial_id())
-            )));
+    std::string new_value = old_value + "MWTxn" + std::to_string(vhandle.serial_id());
+    dbv.v.assign(new_value);
     vhandle.Write(dbv);
 }
 
@@ -593,10 +589,7 @@ namespace verification{
 //            std::string row_value = "RMWTxn ECE496" + std::to_string(this->sid);
 //            row.v.assign(row_value);
             std::string old_value(row.v.data(), row.v.size());
-            std::string new_value = "RMWTxn ECE496" + std::to_string(
-                    std::hash<std::string>{}(
-                            old_value+ std::to_string(this->sid)
-                    ));
+            std::string new_value = old_value + "RMWTxn" + std::to_string(this->sid);
             row.v.assign(new_value);
             util::Instance<YcsbVerificator>().table.Update(this->input.keys[i], row.Encode());
         }
@@ -605,10 +598,7 @@ namespace verification{
 //        std::string row_value = "RMWTxn ECE496" + std::to_string(this->sid);
 
         std::string old_value(row.v.data(), row.v.size());
-        std::string new_value = "RMWTxn ECE496" + std::to_string(
-                std::hash<std::string>{}(
-                        old_value+ std::to_string(this->sid)
-                ));
+        std::string new_value = old_value + "RMWTxn" + std::to_string(this->sid);
         row.v.assign(new_value);
         util::Instance<YcsbVerificator>().table.Update(this->input.keys[ycsb::kTotal - 1], row.Encode());
     }
@@ -632,10 +622,8 @@ namespace verification{
 //            std::string row_value = "MWTxn ECE496" + std::to_string(this->sid);
 //            row.v.assign(row_value);
             std::string old_value(row.v.data(), row.v.size());
-            row.v.assign("MWTxn ECE496" + std::to_string(
-                    std::hash<std::string>{}(
-                            old_value+ std::to_string(this->sid)
-                    )));
+            std::string new_value = old_value + "MWTxn" + std::to_string(this->sid);
+            row.v.assign(new_value);
             util::Instance<YcsbVerificator>().table.Update(this->input.keys[i], row.Encode());
         }
     }
