@@ -192,6 +192,9 @@ void BasePieceCollection::ExecutionRoutine::Run()
   PieceRoutine *next_r;
   go::Scheduler *sched = scheduler();
 
+  EpochPhase curr_phase = util::Instance<EpochManager>().current_phase();
+  util::Instance<PriorityTxnService>().ReportPhaseStart(curr_phase);
+
   auto should_pop = PromiseRoutineDispatchService::GenericDispatchPeekListener(
       [&next_r, sched]
       (PieceRoutine *r, BasePieceCollection::ExecutionRoutine *state) -> bool {

@@ -132,7 +132,17 @@ class PriorityTxnService {
 
   PriorityTxnService();
   void PushTxn(PriorityTxn* txn);
+  /**
+   * Update g_tsc at the beginning of each epoch
+   * \param epoch_nr
+   */
   void UpdateEpochStartTime(uint64_t epoch_nr);
+  void ReportPhaseStart(EpochPhase phase);
+  /**
+   * Update the phase end time
+   * \param phase
+   */
+  void ReportPhaseEnd(EpochPhase phase);
   void UpdateProgress(int core_id, uint64_t progress);
   void PrintProgress(void);
   uint64_t GetMaxProgress(void);
@@ -151,6 +161,10 @@ class PriorityTxnService {
  public:
   static void PrintStats();
   static unsigned long long g_tsc;
+    static std::atomic<uint64_t> g_insert_end_tsc;
+    static std::atomic<uint64_t> g_initialize_end_tsc;
+    static std::atomic<uint64_t> g_initialize_start_tsc;
+    static std::atomic<uint64_t> g_execute_start_tsc;
   static int execute_piece_time;
 
  private:

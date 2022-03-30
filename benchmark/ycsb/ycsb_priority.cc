@@ -51,10 +51,22 @@ bool MWTxn_Run(PriorityTxn *txn)
     trace(TRACE_IPPT"Running MWTxn");
   // record pri txn init queue time
   uint64_t start_tsc = __rdtsc();
-  uint64_t init_q = (start_tsc - (txn->delay + PriorityTxnService::g_tsc)) / 2200;
   INIT_ROUTINE_BRK(4096);
 
-  // generate txn input
+    uint64_t init_q = (start_tsc - (txn->delay + PriorityTxnService::g_tsc)) / 2200;
+    EpochPhase curr_phase = util::Instance<EpochManager>().current_phase();
+    if (curr_phase == EpochPhase::Initialize) {
+        init_q = (start_tsc - (txn->delay + PriorityTxnService::g_tsc
+                + PriorityTxnService::g_initialize_start_tsc - PriorityTxnService::g_insert_end_tsc)) / 2200;
+    }
+
+    if (curr_phase == EpochPhase::Execute) {
+        init_q = (start_tsc - (txn->delay + PriorityTxnService::g_tsc
+                + PriorityTxnService::g_execute_start_tsc - PriorityTxnService::g_initialize_end_tsc
+                + PriorityTxnService::g_initialize_start_tsc - PriorityTxnService::g_insert_end_tsc)) / 2200;
+    }
+
+        // generate txn input
   MWTxnInput input = dynamic_cast<ycsb::Client*>
       (EpochClient::g_workload_client)->GenerateTransactionInput<MWTxnInput>();
   Ycsb::Key keys[input.nr];
@@ -86,9 +98,8 @@ bool MWTxn_Run(PriorityTxn *txn)
   uint64_t succ_tsc = __rdtsc();
   uint64_t fail = fail_tsc - start_tsc, succ = succ_tsc - fail_tsc;
   txn->measure_tsc = succ_tsc;
-  probes::PriInitQueueTime{init_q, txn->serial_id()}(); // recorded before
   probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
-  EpochPhase curr_phase = util::Instance<EpochManager>().current_phase();
+  probes::PriInitQueueTime{init_q, txn->serial_id()}(); // recorded before
     if (curr_phase == EpochPhase::Insert) {
         probes::PriInitQueueTimeInsert{init_q, txn->serial_id()}(); // recorded before
     }
@@ -148,16 +159,19 @@ bool MWTxn_Run(PriorityTxn *txn)
             auto exec_tsc = __rdtsc();
             auto exec = exec_tsc - ctx.txn->measure_tsc;
             auto total = exec_tsc - (ctx.txn->delay + PriorityTxnService::g_tsc);
-            probes::PriExecTime{exec / 2200, total / 2200, ctx.txn->serial_id()}();
               if (curr_phase == EpochPhase::Insert) {
                   probes::PriTotalLatencyInsert{total / 2200, ctx.txn->serial_id()}(); // recorded before
               }
               if (curr_phase == EpochPhase::Initialize) {
+                  total -= PriorityTxnService::g_initialize_start_tsc - PriorityTxnService::g_insert_end_tsc;
                   probes::PriTotalLatencyInitialize{total / 2200, ctx.txn->serial_id()}(); // recorded before
               }
               if (curr_phase == EpochPhase::Execute) {
+                  total -= PriorityTxnService::g_initialize_start_tsc - PriorityTxnService::g_insert_end_tsc;
+                  total -= PriorityTxnService::g_execute_start_tsc - PriorityTxnService::g_initialize_end_tsc;
                   probes::PriTotalLatencyExecute{total / 2200, ctx.txn->serial_id()}(); // recorded before
               }
+              probes::PriExecTime{exec / 2200, total / 2200, ctx.txn->serial_id()}();
           }
 
           auto core_id = go::Scheduler::CurrentThreadPoolId() - 1;

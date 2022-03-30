@@ -701,7 +701,9 @@ bool EpochExecutionDispatchService::Peek(int core_id, PriorityTxn *&txn, bool dr
             return false;
         }
 
-        if (__rdtsc() - PriorityTxnService::g_tsc < candidate->delay) {
+        if (__rdtsc() - PriorityTxnService::g_tsc < candidate->delay
+                + PriorityTxnService::g_execute_start_tsc - PriorityTxnService::g_initialize_end_tsc
+                + PriorityTxnService::g_initialize_start_tsc - PriorityTxnService::g_insert_end_tsc) {
 
             if (core_id == 0) {
                 trace(TRACE_IPPT "Caught by hack 5, delay constraint");
@@ -776,8 +778,18 @@ bool EpochExecutionDispatchService::Peek_IPPT(int core_id, PriorityTxn *&txn, in
             return false;
         }
 
-        if (__rdtsc() - PriorityTxnService::g_tsc < candidate->delay)
-            return false;
+        EpochPhase curr_phase = util::Instance<EpochManager>().current_phase();
+        if (curr_phase == EpochPhase::Insert) {
+            if (__rdtsc() - PriorityTxnService::g_tsc < candidate->delay) {
+                return false;
+            }
+        } else {
+            if (__rdtsc() - PriorityTxnService::g_tsc < candidate->delay
+                    + PriorityTxnService::g_initialize_start_tsc - PriorityTxnService::g_insert_end_tsc) {
+                return false;
+            }
+        }
+
         if (!dry_run) {
             tq.start.store(tstart + 1, std::memory_order_release);
             txn = candidate;

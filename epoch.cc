@@ -265,10 +265,12 @@ void CallTxnsWorker::initialization_phase_run()
     PieceRoutine *next_r;
     go::Scheduler *sched = scheduler();
 
-//    EpochPhase curr_phase = util::Instance<EpochManager>().current_phase();
+    EpochPhase curr_phase = util::Instance<EpochManager>().current_phase();
 //    if (curr_phase != EpochPhase::Insert) {
     const uint64_t epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
     util::Instance<PriorityTxnService>().UpdateEpochStartTime(epoch_nr);
+    util::Instance<PriorityTxnService>().ReportPhaseStart(curr_phase);
+
 //    }
 
     auto should_pop_pri =
@@ -354,6 +356,7 @@ void CallTxnsWorker::initialization_phase_run()
             // svc.Complete(core_id);
             continue;
         } else {
+            util::Instance<PriorityTxnService>().ReportPhaseEnd(curr_phase);
             bool node_finished =
                     client->conf.FlushBufferPlan(client->per_core_cnts[t]);
 
