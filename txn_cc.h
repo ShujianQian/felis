@@ -129,10 +129,14 @@ class FutureValue<void> {
       if ((wait_cnt & 0x0FFFF) == 0) {
         auto routine = go::Scheduler::Current()->current_routine();
         // FIXME: Shujian: Currently disable preemption due to initialization_phase_run issue
+          EpochPhase curr_phase = util::Instance<EpochManager>().current_phase();
+          if (curr_phase != EpochPhase::Execute) {
+              continue;
+          }
 //        logger->critical("Preempt3 back");
-//        if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt()) {
+        if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt()) {
 //          continue;
-//        }
+        }
       }
       _mm_pause();
     }

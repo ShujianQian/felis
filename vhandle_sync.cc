@@ -154,12 +154,16 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uin
 
     if ((wait_cnt & 0x00FF) == 0) {
         // FIXME: Shujian: Currently disable preemption due to initialization_phase_run issue
+        EpochPhase curr_phase = util::Instance<EpochManager>().current_phase();
+        if (curr_phase != EpochPhase::Execute) {
+            continue;
+        }
 //        logger->critical("Preempt1 back");
-//      if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt()) {
+      if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt()) {
 //        // logger->info("Preempt back");
 //        // Broken???
-//        return true;
-//      }
+        return true;
+      }
     }
 
     if (slot(core_id)->done.load(std::memory_order_acquire))
@@ -218,12 +222,16 @@ void SimpleSync::WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ve
     }
 
       // FIXME: Shujian: Currently disable preemption due to initialization_phase_run issue
-//    if ((wait_cnt & 0x00FF) == 0) {
+    if ((wait_cnt & 0x00FF) == 0) {
 //        logger->critical("Preempt2 back");
-//      if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt()) {
-//        continue;
-//      }
-//    }
+        EpochPhase curr_phase = util::Instance<EpochManager>().current_phase();
+        if (curr_phase != EpochPhase::Execute) {
+            continue;
+        }
+      if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt()) {
+        continue;
+      }
+    }
 
     if (!IsPendingVal(*addr))
       break;
