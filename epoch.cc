@@ -267,8 +267,8 @@ void CallTxnsWorker::initialization_phase_run()
 
 //    EpochPhase curr_phase = util::Instance<EpochManager>().current_phase();
 //    if (curr_phase != EpochPhase::Insert) {
-    const uint64_t epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
-    util::Instance<PriorityTxnService>().UpdateEpochStartTime(epoch_nr);
+    const EpochPhase cur_phase = util::Instance<EpochManager>().current_phase();
+    util::Instance<PriorityTxnService>().UpdateEpochPhaseStartTime(cur_phase);
 //    }
 
     auto should_pop_pri =
@@ -354,6 +354,9 @@ void CallTxnsWorker::initialization_phase_run()
             // svc.Complete(core_id);
             continue;
         } else {
+            const EpochPhase cur_phase_end = util::Instance<EpochManager>().current_phase();
+            util::Instance<PriorityTxnService>().UpdatePhaseEndTime(cur_phase_end);
+
             bool node_finished =
                     client->conf.FlushBufferPlan(client->per_core_cnts[t]);
 
@@ -388,6 +391,8 @@ void CallTxnsWorker::initialization_phase_run()
                 // workloads. For example, issuing takes a longer time.
                 if ((i & 0xFF) == 0) transport.PrefetchInbound();
             }
+
+
             set_urgent(false);
 
             // Here we set the finished flag a bit earlier, so that FinishCompletion()
@@ -448,6 +453,9 @@ void CallTxnsWorker::execution_phase_run(){
   auto cnt_len = nr_nodes * nr_nodes * PromiseRoutineTransportService::kPromiseMaxLevels;
   std::fill(cnt, cnt + cnt_len, 0);
 
+  const EpochPhase cur_phase = util::Instance<EpochManager>().current_phase();
+  util::Instance<PriorityTxnService>().UpdateEpochPhaseStartTime(cur_phase);
+
   set_urgent(true);
   auto pq = client->cur_txns.load()->per_core_txns[t];
 
@@ -494,6 +502,7 @@ void CallTxnsWorker::execution_phase_run(){
     // workloads. For example, issuing takes a longer time.
     if ((i & 0xFF) == 0) transport.PrefetchInbound();
   }
+
   set_urgent(false);
 
     int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
@@ -515,6 +524,8 @@ void CallTxnsWorker::execution_phase_run(){
     while (EpochClient::g_enable_granola && g_finished.load() != NodeConfiguration::g_nr_threads)
       _mm_pause();
   }
+
+  util::Instance<PriorityTxnService>().UpdatePhaseEndTime(cur_phase);
 
   if (client->callback.phase == EpochPhase::Execute) {
     VHandle::Quiescence();

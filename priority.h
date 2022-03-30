@@ -16,6 +16,8 @@ class PriorityTxnService {
   std::array<uint64_t*, NodeConfiguration::kMaxNrThreads> exec_progress;
   std::array<uint64_t*, NodeConfiguration::kMaxNrThreads> local_last_sid;
   std::atomic_int core;
+  std::atomic_int phase_start;
+  std::atomic_int phase_end;
   std::atomic_ulong epoch_nr;
   uint64_t global_last_sid;
   util::SpinLock lock; // for global_last_sid
@@ -138,7 +140,8 @@ class PriorityTxnService {
 
   PriorityTxnService();
   void PushTxn(PriorityTxn* txn);
-  void UpdateEpochStartTime(uint64_t epoch_nr);
+  void UpdateEpochPhaseStartTime(int cur_phase);
+  void UpdatePhaseEndTime(int cur_phase);
   void UpdateProgress(int core_id, uint64_t progress);
   void PrintProgress(void);
   uint64_t GetMaxProgress(void);
@@ -157,6 +160,8 @@ class PriorityTxnService {
  public:
   static void PrintStats();
   static unsigned long long g_tsc;
+  static unsigned long long g_tsc_phase_start;
+  static unsigned long long g_tsc_phase_end;
   static int execute_piece_time;
 
  private:

@@ -45,6 +45,8 @@ bool PriorityTxnService::g_priority_preemption = true;
 bool PriorityTxnService::g_tpcc_pin = true;
 
 unsigned long long PriorityTxnService::g_tsc = 0;
+unsigned long long PriorityTxnService::g_tsc_phase_start = 0;
+unsigned long long PriorityTxnService::g_tsc_phase_end = 0;
 int PriorityTxnService::execute_piece_time = 0;
 
 mem::ParallelSlabPool BaseInsertKey::pool;
@@ -226,6 +228,8 @@ PriorityTxnService::PriorityTxnService()
   this->core = 0;
   this->global_last_sid = 0;
   this->epoch_nr = 0;
+  this->phase_start = -1;
+  this->phase_end = -1;
   for (auto i = 0; i < NodeConfiguration::g_nr_threads; ++i) {
     auto r = go::Make([this, i] {
       // mem from heap may not be NUMA aware, so get them from the pool
@@ -282,12 +286,30 @@ std::string format_sid(uint64_t sid)
          ", txn sequence " + std::to_string(sid >> 8 & 0xFFFFFF);
 }
 
-void PriorityTxnService::UpdateEpochStartTime(uint64_t epoch_nr)
+void PriorityTxnService::UpdateEpochPhaseStartTime(int cur_phase)
 {
-  uint64_t old_nr = this->epoch_nr.load();
-  if (epoch_nr > old_nr) {
-    if (this->epoch_nr.compare_exchange_strong(old_nr, epoch_nr))
-      PriorityTxnService::g_tsc = __rdtsc();
+  int old_phase = this->phase_start.load();
+  if (old_phase != cur_phase) {
+    if (this->phase_start.compare_exchange_strong(old_phase, cur_phase)) {
+//      logger->info("updated phase start: {} -> {}", old_phase, cur_phase);
+      PriorityTxnService::g_tsc_phase_start = __rdtsc();
+      if (cur_phase == 0) {
+//        logger->info("updated epoch start & phase end");
+        PriorityTxnService::g_tsc_phase_end = PriorityTxnService::g_tsc_phase_start;
+        PriorityTxnService::g_tsc = PriorityTxnService::g_tsc_phase_start;
+      }
+    }
+  }
+}
+
+void PriorityTxnService::UpdatePhaseEndTime(int cur_phase)
+{
+  int old_phase = this->phase_end.load();
+  if (old_phase != cur_phase) {
+    if (this->phase_end.compare_exchange_strong(old_phase, cur_phase)) {
+//      logger->info("updated phase end: {} -> {}", old_phase, cur_phase);
+      PriorityTxnService::g_tsc_phase_end = __rdtsc();
+    }
   }
 }
 
@@ -298,8 +320,12 @@ void PriorityTxnService::UpdateProgress(int core_id, uint64_t progress)
   if (progress > *exec_progress[core_id]) {
     uint64_t old_nr = *exec_progress[core_id] >> 32, new_nr = progress >> 32;
     if (unlikely(new_nr > old_nr)) {
-      if (epoch_nr.compare_exchange_strong(old_nr, new_nr))
-        PriorityTxnService::g_tsc = __rdtsc();
+      if (epoch_nr.compare_exchange_strong(old_nr, new_nr)){
+        // TODO: nothing for now
+//        logger->info("updated progress");
+//        PriorityTxnService::g_tsc = __rdtsc();
+        ;
+      }
     }
     *exec_progress[core_id] = progress;
   }
