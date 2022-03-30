@@ -30,7 +30,7 @@ struct PieceRoutine {
 
   BasePieceCollection *next;
 
-  uint8_t fv_waits;
+  uint8_t fv_signals;
   uint8_t __padding__[15];
 
   static PieceRoutine *CreateFromCapture(size_t capture_len);

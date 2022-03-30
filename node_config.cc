@@ -283,9 +283,8 @@ void NodeConfiguration::CollectBufferPlanImpl(PieceRoutine *routine, unsigned lo
   if (dst_node == 0)
     dst_node = src_node;
   if (dst_node < 255) {
-    //one for the routine, more for any waits being sent with it
-    cnts[BatchBufferIndex(level, src_node, dst_node)]+= 1+routine->fv_waits; 
-    //if(routine->fv_waits>0) logger->info("added count {} to {}", src_node, dst_node);
+    // One for the routine, more for any waits being sent with it
+    cnts[BatchBufferIndex(level, src_node, dst_node)]+= 1+routine->fv_signals; 
   } else {
     // Dynamic piece. We need to increment for all dst node.
     for (auto d = 1; d <= nr_nodes(); d++) {

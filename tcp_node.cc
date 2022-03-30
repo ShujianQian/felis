@@ -123,7 +123,6 @@ bool SendChannel::PushRelease(int tid, unsigned int start, unsigned int end)
   
   auto mem = channels[tid].mem;
   if (end - start > 0) {
-    //logger->info("PushRelease {}", end-start);
     void *buf = alloca(end - start);
     memcpy(buf, mem + start, end - start);
     channels[tid].dirty.store(true, std::memory_order_release);
@@ -238,7 +237,6 @@ void ReceiverChannel::Complete(size_t n)
 {
   if (n == 0) return;
   int64_t left = nr_left.fetch_sub(n) - n;
-  //logger->info("left: {}",left);
   abort_if(left < 0, "left {} < 0!", left);
   if (left == 0) {
     logger->info("{} Complete() last n={}", (void *) this, n);
@@ -283,7 +281,7 @@ size_t ReceiverChannel::PollRoutines(PieceRoutine **routines, size_t cnt)
   int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
   uint64_t header;
   size_t i = 0; //counter for pieces processed
-  size_t futuresProcessed = 0; //count how many futures we processed
+  size_t future_processed = 0; //count how many futures we processed
   while (i < cnt) { //only process so long as piece buffer has space
     if (in->Peek(&header, 8) < 8) //stop early if buffer empty
       break;
@@ -314,7 +312,8 @@ size_t ReceiverChannel::PollRoutines(PieceRoutine **routines, size_t cnt)
       in->Skip(buflen);
 
       transport->OnCounterReceived();
-    } else if ((header & 0xFFFF000000000000) == ((uint64_t)2<<55) ){ //lets use the upper 2 bytes of the header as a flag
+      //TODO: put the magic number somewhere consistent
+    } else if ((header & 0xFFFF000000000000) == ((uint64_t)2<<55) ){ // Lets use the upper 2 bytes of the header as a flag
       
       header -= ((uint64_t)2<<55);
       auto buflen = 8 + header;
@@ -329,17 +328,17 @@ size_t ReceiverChannel::PollRoutines(PieceRoutine **routines, size_t cnt)
       memcpy(&offset, buf+16, 8);
       memcpy(&node_id, buf+24, 4);
 
-      //get the pointer to the local future value object
+      // Get the pointer to the local future value object
       BaseFutureValue* localFuture = (BaseFutureValue *) util::Instance<EpochManager>().ptr(epoch_nr,node_id,offset);
 
-      ((FutureValue<int32_t> *)localFuture)->DecodeFrom(buf+28); //TODO, don't assume type
-      localFuture->setReady();
+      ((FutureValue<int32_t> *)localFuture)->DecodeFrom(buf+28); //TODO, don't assume type, decode from should be a virtual function
+      localFuture->setReady(); //TODO: can we just use Signal() here?
       in->Skip(buflen);
-      //logger->info("receiving: {} offset: {}" ,go::Scheduler::CurrentThreadPoolId()-1, offset);
-      futuresProcessed++;
+      future_processed++;
 
       //by counting futures alongside pieces, we consider them both tasks
       //because of this, we need to count every time we recieve a Future
+      //TODO: modify to allow batching at end of loop
       svc.Complete(core_id);
 
     } else {
@@ -352,9 +351,8 @@ size_t ReceiverChannel::PollRoutines(PieceRoutine **routines, size_t cnt)
       in->Skip(buflen);
     }
   }
-  //counter for incoming futures is piggybacked alongside the counter for incoming pieces 
-  //if(i+futuresProcessed > 0) logger->info("polled {} pieces and {} futures",i, futuresProcessed);
-  Complete(i+futuresProcessed); 
+  // Counter for incoming futures is piggybacked alongside the counter for incoming pieces 
+  Complete(i + future_processed); 
   return i;
 }
 
@@ -518,32 +516,27 @@ void TcpNodeTransport::TransportFutureValue(BaseFutureValue *val)
     if (node == conf.node_id()) continue;
 
     auto out = outgoing_channels.at(node);
-    //Fill in the correct buffer_size
-    //std::cout << "sending\n";
+    // Fill in the correct buffer_size
     size_t buffer_size = ((FutureValue<int32_t> *)val)->EncodeSize(); //TODO remove cast here as well
     buffer_size += 3 * sizeof(uint64_t); //header, epoch, offset
     buffer_size += sizeof(int); //node id
     //the buffer is 28 bytes, plus the size of the encoded future value, which for now is always 4 bytes, for 32 total
-    //does the whole thing need to be padded to nearest 8?
+
 
     uint8_t *buffer = (uint8_t *) out->Alloc(buffer_size);
-    // Fill in the data here in the buffer pointer. After that, make sure
-    // you call the Finish() function.
+
     uint64_t header = buffer_size - 8 + ((uint64_t)2<<55); // 2^56 is our flag
 
-    //std::cout << "preconvert\n";
-    //this bit might also be wrong
-    GenericEpochObject<BaseFutureValue> epochInfo = val->ConvertToEpochObject();
+    GenericEpochObject<BaseFutureValue> epoch_info = val->ConvertToEpochObject();
 
     memcpy(buffer,&header,8);
-    memcpy(buffer+8,&(epochInfo.epoch_nr),8);
-    memcpy(buffer+16,&(epochInfo.offset),8);
-    memcpy(buffer+24,&(epochInfo.node_id),4);
-    //std::cout << "encodeTo\n";
+    memcpy(buffer+8,&(epoch_info.epoch_nr),8);
+    memcpy(buffer+16,&(epoch_info.offset),8);
+    memcpy(buffer+24,&(epoch_info.node_id),4);
+
     ((FutureValue<int32_t> *)val)->EncodeTo(buffer+28); //TODO remove cast
 
     out->Finish(buffer_size);
-    //logger->info("sent data: {} offset: {}",go::Scheduler::CurrentThreadPoolId()-1,epochInfo.offset);
   }
 }
 
@@ -563,7 +556,6 @@ void TcpNodeTransport::FinishCompletion(int level)
     auto idx = conf.BatchBufferIndex(level, src_node, dst_node);
     auto target_cnt = conf.TotalBatchCounter(idx).load();
     auto cnt = conf.batcher().Merge(level, meta, dst_node);
-    //printf("cnt %lu, target %lu\n", cnt, target_cnt);
     auto chn = outgoing_channels.at(dst_node);
     if (cnt == target_cnt && cnt > 0) {
       // Flush channels to this route
@@ -585,7 +577,7 @@ bool TcpNodeTransport::PeriodicIO(int core)
     if (core == -1) {
       chn->Flush();
     } else {
-      //logger->info("periodic IO on core {}",core);
+
       auto [success, did_flush] = chn->TryFlushForThread(core + 1);
 
       // We need to flush no matter what.

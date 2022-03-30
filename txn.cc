@@ -250,6 +250,7 @@ void BaseFutureValue::Signal()
   ready = true;
 }
 
+//TODO: Consider unifying spin code
 void BaseFutureValue::Wait()
 {
   long wait_cnt = 0;
@@ -264,10 +265,9 @@ void BaseFutureValue::Wait()
     }
 
     if ((wait_cnt & 0x00FFF) == 0) {
-      //logger->info("wait preempt {}",core_id);
+
       auto routine = go::Scheduler::Current()->current_routine();
       if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt()) {
-        //logger->info("wait preempt true {}", core_id);
         continue;
       }
     }
