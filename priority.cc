@@ -246,8 +246,9 @@ PriorityTxnService::PriorityTxnService()
 
       if (g_sid_bitmap) {
         auto buf = mem::AllocMemory(mem::MemAllocType::GenericMemory, sizeof(Bitmap), numa_node);
-        seq_bitmap[i] = new (buf) Bitmap(EpochClient::g_txn_per_epoch);
-        // since g_strip_priority = #core (see above, lazy once), bitmap size = # of txn per epoch
+        // All of the IPPT must have SID > max_batch_seq
+        // therefore the seq_bitmap size is expanded to 2 x txn_per_epoch for now
+        seq_bitmap[i] = new (buf) Bitmap(2 * EpochClient::g_txn_per_epoch);
       } else {
         seq_bitmap[i] = nullptr;
       }

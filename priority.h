@@ -51,6 +51,9 @@ class PriorityTxnService {
       }
       return -1;
     }
+    size_t get_bitmap_size() {
+      return size;
+    }
   };
   std::array<Bitmap*, NodeConfiguration::kMaxNrThreads> seq_bitmap;
 
@@ -59,7 +62,8 @@ class PriorityTxnService {
     // idx [0, nr_batch_txns - 1], core_id [0, nr_cores - 1]
     size_t nr_batch_txns = EpochClient::g_txn_per_epoch;
     size_t nr_cores = NodeConfiguration::g_nr_threads;
-    if (idx < 0 || idx >= nr_batch_txns + Bitmap::extra_strip || core_id < 0 || core_id >= nr_cores) {
+    if (idx < 0 || idx >= seq_bitmap[core_id]->get_bitmap_size() ||
+        core_id < 0 || core_id >= nr_cores) {
       logger->critical("idx2seq access out of bound, idx {}, core_id {}", idx, core_id);
       std::abort();
     }
@@ -79,8 +83,10 @@ class PriorityTxnService {
   int seq2idx(int seq)
   {
     int k = g_strip_batched + g_strip_priority;
-    size_t seq_max = k * (EpochClient::g_txn_per_epoch / g_strip_batched + Bitmap::extra_strip) +
-                     EpochClient::g_txn_per_epoch % g_strip_batched;
+    // bitmap for all core have same size
+    int bitmap_size = seq_bitmap[0]->get_bitmap_size();
+    size_t seq_max = k * (bitmap_size / g_strip_batched + Bitmap::extra_strip) +
+                     bitmap_size % g_strip_batched;
     if (seq < 1 || seq > seq_max) {
       logger->critical("seq2idx access out of bound, seq {}", seq);
       std::abort();
