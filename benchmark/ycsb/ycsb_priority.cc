@@ -101,15 +101,15 @@ bool MWTxn_Run(PriorityTxn *txn)
   probes::PriInitTime{succ / 2200, fail / 2200, fail_cnt, txn->serial_id()}();
   probes::PriInitQueueTime{init_q, txn->serial_id()}(); // recorded before
     if (curr_phase == EpochPhase::Insert) {
-        probes::PriInitAbort{fail_cnt}();
+        probes::PriInitAbort{fail / 2200, fail_cnt}();
         probes::PriInitQueueTimeInsert{init_q, txn->serial_id()}(); // recorded before
     }
     if (curr_phase == EpochPhase::Initialize) {
-        probes::PriInitAbort{fail_cnt}();
+        probes::PriInitAbort{fail / 2200, fail_cnt}();
         probes::PriInitQueueTimeInitialize{init_q, txn->serial_id()}(); // recorded before
     }
     if (curr_phase == EpochPhase::Execute) {
-        probes::PriExecAbort{fail_cnt}();
+        probes::PriExecAbort{fail / 2200, fail_cnt}();
         probes::PriInitQueueTimeExecute{init_q, txn->serial_id()}(); // recorded before
     }
     if (give_up) {
