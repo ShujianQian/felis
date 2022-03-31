@@ -105,7 +105,7 @@ bool MWTxn_Run(PriorityTxn *txn)
         probes::PriInitQueueTimeInsert{init_q, txn->serial_id()}(); // recorded before
     }
     if (curr_phase == EpochPhase::Initialize) {
-        probes::PriInitAbort{fail / 2200, fail_cnt}();
+        probes::PriInsertAbort{fail / 2200, fail_cnt}();
         probes::PriInitQueueTimeInitialize{init_q, txn->serial_id()}(); // recorded before
     }
     if (curr_phase == EpochPhase::Execute) {

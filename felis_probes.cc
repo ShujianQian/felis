@@ -53,6 +53,7 @@ static struct ProbeMain {
 
   agg::Agg<agg::Sum> init_fail_cnt;
   agg::Agg<agg::Sum> init_fail_cnt_init_phase;
+  agg::Agg<agg::Sum> init_fail_cnt_insert_phase;
   agg::Agg<agg::Sum> init_fail_cnt_exec_phase;
   agg::Agg<agg::Average> init_fail_cnt_avg;
   agg::Agg<agg::Max<std::tuple<uint64_t, int>>> init_fail_cnt_max;
@@ -138,6 +139,7 @@ thread_local struct ProbePerCore {
   AGG(init_fail_hist);
   AGG(init_fail_cnt);
   AGG(init_fail_cnt_init_phase);
+  AGG(init_fail_cnt_insert_phase);
   AGG(init_fail_cnt_exec_phase);
   AGG(init_fail_cnt_avg);
   AGG(init_fail_cnt_max);
@@ -346,6 +348,14 @@ template <> void OnProbe(felis::probes::PriInitAbort p)
   int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
   if (p.fail_time != 0) {
     statcnt.init_fail_cnt_init_phase << p.fail_cnt;
+  }
+}
+
+template <> void OnProbe(felis::probes::PriInsertAbort p)
+{
+  int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+  if (p.fail_time != 0) {
+    statcnt.init_fail_cnt_insert_phase << p.fail_cnt;
   }
 }
 
@@ -673,8 +683,9 @@ ProbeMain::~ProbeMain()
     std::cout << "[Pri-stat] total_latency_execute " << global.total_latency_avg_execute() << " us " << std::endl;
     
     double abort_rate = 100.0 * global.init_fail_cnt.sum / cnt;
-    double abort_rate_init = 100.0 * global.init_fail_cnt_init_phase.sum / cnt;
-    double abort_rate_exec = 100.0 * global.init_fail_cnt_exec_phase.sum / cnt;
+    double abort_rate_insert = 100.0 * global.init_fail_cnt_insert_phase.sum / global.init_queue_avg_insert.getCnt();
+    double abort_rate_init = 100.0 * global.init_fail_cnt_init_phase.sum / global.init_queue_avg_initialize.getCnt();
+    double abort_rate_exec = 100.0 * global.init_fail_cnt_exec_phase.sum / global.init_queue_avg_execute.getCnt();
     std::cout << "[Pri-stat] abort_rate_init " << abort_rate_init << " unit % "<< std::endl;
     std::cout << "[Pri-stat] abort_rate_exec " << abort_rate_exec << " unit % "<< std::endl;
 

@@ -140,6 +140,12 @@ struct PriInitAbort {
   void operator()() const;
 };
 
+struct PriInsertAbort {
+  uint64_t fail_time;
+  int fail_cnt;
+  void operator()() const;
+};
+
 struct PriExecAbort {
   uint64_t fail_time;
   int fail_cnt;
@@ -234,6 +240,7 @@ struct Distance {
   PROBE_PROXY(felis::probes::PriInitQueueTimeExecute);                         \
   PROBE_PROXY(felis::probes::PriInitTime);                                     \
   PROBE_PROXY(felis::probes::PriInitAbort);                                    \
+  PROBE_PROXY(felis::probes::PriInsertAbort);                                  \
   PROBE_PROXY(felis::probes::PriExecAbort);                                    \
   PROBE_PROXY(felis::probes::PriExecQueueTime);                                \
   PROBE_PROXY(felis::probes::PriExecQueueTimeInsert);                          \
