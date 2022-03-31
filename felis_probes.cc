@@ -662,9 +662,16 @@ ProbeMain::~ProbeMain()
         }
       }
     }
-
     // 8_1 abort rate, unit %
     long cnt = global.total_latency_avg.getCnt();
+    long insert_cnt = global.total_latency_avg_insert.getCnt();
+    long init_cnt = global.total_latency_avg_initialize.getCnt();
+    long total_init_phase_cnt = insert_cnt + init_cnt;
+    double init_sum = global.total_latency_avg_insert.sum + global.total_latency_avg_initialize.sum;
+    double init_tot_lat_avg = init_sum / init_cnt;
+    std::cout << "[Pri-stat] init_tot_lat_avg " << init_tot_lat_avg << " us " << std::endl;
+    std::cout << "[Pri-stat] total_latency_execute " << global.total_latency_avg_execute() << " us " << std::endl;
+    
     double abort_rate = 100.0 * global.init_fail_cnt.sum / cnt;
     double abort_rate_init = 100.0 * global.init_fail_cnt_init_phase.sum / cnt;
     double abort_rate_exec = 100.0 * global.init_fail_cnt_exec_phase.sum / cnt;
@@ -683,9 +690,9 @@ ProbeMain::~ProbeMain()
     long pri_tpt_1 = cnt * 1000 / felis::PriorityTxnService::execute_piece_time;
 
     long cnt_init = global.total_latency_avg_insert.getCnt() + global.total_latency_avg_initialize.getCnt();
-    long pri_tpt_init = cnt_init * 1000 / felis::PriorityTxnService::execute_piece_time;
-    long cnt_exec = global.total_latency_avg_insert.getCnt() + global.total_latency_avg_execute.getCnt();
-    long pri_tpt_exec = cnt_exec * 1000 / felis::PriorityTxnService::init_piece_time;
+    long pri_tpt_init = cnt_init * 1000 / felis::PriorityTxnService::init_piece_time;
+    long cnt_exec = global.total_latency_avg_execute.getCnt();
+    long pri_tpt_exec = cnt_exec * 1000 / felis::PriorityTxnService::execute_piece_time;
     std::cout << "[Pri-stat] pri_tpt_init " << static_cast<int>(pri_tpt_init) << std::endl;
     std::cout << "[Pri-stat] pri_tpt_exec " << static_cast<int>(pri_tpt_exec) << std::endl;
     

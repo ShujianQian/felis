@@ -233,6 +233,8 @@ struct Distance {
   PROBE_PROXY(felis::probes::PriInitQueueTimeInitialize);                      \
   PROBE_PROXY(felis::probes::PriInitQueueTimeExecute);                         \
   PROBE_PROXY(felis::probes::PriInitTime);                                     \
+  PROBE_PROXY(felis::probes::PriInitAbort);                                    \
+  PROBE_PROXY(felis::probes::PriExecAbort);                                    \
   PROBE_PROXY(felis::probes::PriExecQueueTime);                                \
   PROBE_PROXY(felis::probes::PriExecQueueTimeInsert);                          \
   PROBE_PROXY(felis::probes::PriExecQueueTimeInitialize);                      \
