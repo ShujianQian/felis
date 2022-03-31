@@ -715,6 +715,8 @@ void EpochClient::OnExecuteComplete()
     PriorityTxnService::execute_piece_time += (int) (/*PriorityTxnService::g_execute_end_tsc*/__rdtsc() - PriorityTxnService::g_tsc
             - PriorityTxnService::g_execute_start_tsc + PriorityTxnService::g_initialize_end_tsc
             - PriorityTxnService::g_initialize_start_tsc + PriorityTxnService::g_insert_end_tsc) / 2200000;
+    PriorityTxnService::init_piece_time += (int) ((PriorityTxnService::g_insert_end_tsc - PriorityTxnService::g_tsc) +
+            (PriorityTxnService::g_initialize_end_tsc - PriorityTxnService::g_initialize_start_tsc)) / 2200000;
   if (NodeConfiguration::g_priority_txn) {
     auto &svc = util::Instance<PriorityTxnService>();
     for (int i = 0; i < NodeConfiguration::g_nr_threads; ++i) {

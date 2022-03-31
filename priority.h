@@ -177,6 +177,7 @@ class PriorityTxnService {
     static std::atomic<uint64_t> g_execute_start_tsc;
     static std::atomic<uint64_t> g_execute_end_tsc;
   static int execute_piece_time;
+  static int init_piece_time;
 
  private:
   class PieceCounter {

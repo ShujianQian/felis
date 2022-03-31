@@ -52,6 +52,7 @@ std::atomic<uint64_t> PriorityTxnService::g_initialize_start_tsc = std::numeric_
 std::atomic<uint64_t> PriorityTxnService::g_execute_start_tsc = std::numeric_limits<uint64_t>::max();
 std::atomic<uint64_t> PriorityTxnService::g_execute_end_tsc = std::numeric_limits<uint64_t>::max();
 int PriorityTxnService::execute_piece_time = 0;
+int PriorityTxnService::init_piece_time = 0;
 
 mem::ParallelSlabPool BaseInsertKey::pool;
 

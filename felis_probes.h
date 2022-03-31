@@ -134,6 +134,16 @@ struct PriInitTime {
   void operator()() const;
 };
 
+struct PriInitAbort {
+  int fail_cnt;
+  void operator()() const;
+};
+
+struct PriExecAbort {
+  int fail_cnt;
+  void operator()() const;
+};
+
 struct PriExecQueueTime {
   uint64_t time;
   uint64_t sid;

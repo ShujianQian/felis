@@ -52,6 +52,8 @@ static struct ProbeMain {
   agg::Agg<agg::Histogram<512, 0, 1>> init_fail_hist;
 
   agg::Agg<agg::Sum> init_fail_cnt;
+  agg::Agg<agg::Sum> init_fail_cnt_init_phase;
+  agg::Agg<agg::Sum> init_fail_cnt_exec_phase;
   agg::Agg<agg::Average> init_fail_cnt_avg;
   agg::Agg<agg::Max<std::tuple<uint64_t, int>>> init_fail_cnt_max;
   agg::Agg<agg::Histogram<128, 0, 1>> init_fail_cnt_hist;
@@ -135,6 +137,8 @@ thread_local struct ProbePerCore {
   AGG(init_fail_max);
   AGG(init_fail_hist);
   AGG(init_fail_cnt);
+  AGG(init_fail_cnt_init_phase);
+  AGG(init_fail_cnt_exec_phase);
   AGG(init_fail_cnt_avg);
   AGG(init_fail_cnt_max);
   AGG(init_fail_cnt_hist);
@@ -335,6 +339,22 @@ template <> void OnProbe(felis::probes::PriInitTime p)
   statcnt.init_succ_avg << p.succ_time;
   statcnt.init_succ_max.addData(p.succ_time, std::make_tuple(p.sid, core_id));
   statcnt.init_succ_hist << p.succ_time;
+}
+
+template <> void OnProbe(felis::probes::PriInitAbort p)
+{
+  int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+  if (p.fail_time != 0) {
+    statcnt.init_fail_cnt_init_phase << p.fail_cnt;
+  }
+}
+
+template <> void OnProbe(felis::probes::PriExecAbort p)
+{
+  int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+  if (p.fail_time != 0) {
+    statcnt.init_fail_cnt_exec_phase << p.fail_cnt;
+  }
 }
 
 template <> void OnProbe(felis::probes::PriExecQueueTime p)
@@ -646,6 +666,11 @@ ProbeMain::~ProbeMain()
     // 8_1 abort rate, unit %
     long cnt = global.total_latency_avg.getCnt();
     double abort_rate = 100.0 * global.init_fail_cnt.sum / cnt;
+    double abort_rate_init = 100.0 * global.init_fail_cnt_init_phase.sum / cnt;
+    double abort_rate_exec = 100.0 * global.init_fail_cnt_exec_phase.sum / cnt;
+    std::cout << "[Pri-stat] abort_rate_init " << abort_rate_init << " unit % "<< std::endl;
+    std::cout << "[Pri-stat] abort_rate_exec " << abort_rate_exec << " unit % "<< std::endl;
+
     result.insert({"8_1", abort_rate});
     // 8_2 txn count
     result.insert({"8_2", static_cast<int>(cnt)});
@@ -656,6 +681,14 @@ ProbeMain::~ProbeMain()
     long batch_tpt = total_nr_txns * 1000 / dur; // duration is in ms
     long pri_tpt = batch_tpt * cnt / total_nr_txns;
     long pri_tpt_1 = cnt * 1000 / felis::PriorityTxnService::execute_piece_time;
+
+    long cnt_init = global.total_latency_avg_insert.getCnt() + global.total_latency_avg_initialize.getCnt();
+    long pri_tpt_init = cnt_init * 1000 / felis::PriorityTxnService::execute_piece_time;
+    long cnt_exec = global.total_latency_avg_insert.getCnt() + global.total_latency_avg_execute.getCnt();
+    long pri_tpt_exec = cnt_exec * 1000 / felis::PriorityTxnService::init_piece_time;
+    std::cout << "[Pri-stat] pri_tpt_init " << static_cast<int>(pri_tpt_init) << std::endl;
+    std::cout << "[Pri-stat] pri_tpt_exec " << static_cast<int>(pri_tpt_exec) << std::endl;
+    
     int total_tpt = batch_tpt + pri_tpt;
     result.insert({"9_1", static_cast<int>(batch_tpt)});
     result.insert({"9_2", static_cast<int>(pri_tpt_1)});
