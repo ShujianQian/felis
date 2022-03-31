@@ -700,10 +700,13 @@ ProbeMain::~ProbeMain()
     long pri_tpt = batch_tpt * cnt / total_nr_txns;
     long pri_tpt_1 = cnt * 1000 / felis::PriorityTxnService::execute_piece_time;
 
-    long cnt_init = global.total_latency_avg_insert.getCnt() + global.total_latency_avg_initialize.getCnt();
+    long cnt_insert = global.total_latency_avg_insert.getCnt() + global.init_queue_avg_insert.getCnt();
+    long pri_tpt_insert = cnt_insert * 1000 / felis::PriorityTxnService::insert_piece_time;
+    long cnt_init = global.total_latency_avg_insert.getCnt() + global.init_queue_avg_initialize.getCnt();
     long pri_tpt_init = cnt_init * 1000 / felis::PriorityTxnService::init_piece_time;
     long cnt_exec = global.total_latency_avg_execute.getCnt();
     long pri_tpt_exec = cnt_exec * 1000 / felis::PriorityTxnService::execute_piece_time;
+    std::cout << "[Pri-stat] pri_tpt_insert " << static_cast<int>(pri_tpt_insert) << std::endl;
     std::cout << "[Pri-stat] pri_tpt_init " << static_cast<int>(pri_tpt_init) << std::endl;
     std::cout << "[Pri-stat] pri_tpt_exec " << static_cast<int>(pri_tpt_exec) << std::endl;
     
