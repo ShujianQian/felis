@@ -261,6 +261,76 @@ struct SpecialHistogram {
   }
 };
 
+#define N_SID_SPECIAL 37
+struct SIDHistogram {
+  long hist[N_SID_SPECIAL];
+  SIDHistogram() {
+    memset(hist, 0, sizeof(long) * N_SID_SPECIAL);
+  }
+
+  const double buckets[N_SID_SPECIAL] = {
+      0, 1, 10, 50, 100, 200, 300, 400, 500,600, 700, 800, 900, 1000,
+      2000, 3000, 4000,5000, 10000, 15000, 20000, 25000, 30000, 35000, 40000, 45000, 50000,
+      55000, 60000, 65000, 70000, 75000, 80000, 85000, 90000, 95000, 100000
+  };
+
+  int val2idx(double value) {
+    if (value < 1)
+      return 0;
+    int i;
+    for (i = 0; i < N_SID_SPECIAL - 1; i++) {
+      if (value >= buckets[i] && value < buckets[i+1]){
+        return i;
+      }
+    }
+    return i;
+  }
+  SIDHistogram &operator<<(double value) {
+    int idx = val2idx(value);
+    if (idx >= 0 && idx < N_SID_SPECIAL) hist[idx]++;
+    else if (idx >= N_SID_SPECIAL) hist[N_SID_SPECIAL-1]++; // larger than max is put in last bucket
+    return *this;
+  }
+  SIDHistogram &operator<<(const SIDHistogram &rhs) {
+    for (int i = 0; i < N_SID_SPECIAL; i++) hist[i] += rhs.hist[i];
+    return *this;
+  }
+  double CalculatePercentile(double scale, int &idx) const {
+    size_t total_nr = Count();
+    long medium_idx = total_nr * scale;
+    for (int i = 0; i < N_SID_SPECIAL; i++) {
+      medium_idx -= hist[i];
+      if (medium_idx < 0) {
+        idx = i;
+        return buckets[i];
+      }
+    }
+    return 0;
+  }
+  size_t Count() const {
+    size_t total_nr = 0;
+    for (int i = 0; i < N_SID_SPECIAL; i++)
+      total_nr += hist[i];
+    return total_nr;
+  }
+
+  std::string OutputCdf() {
+    std::ostringstream out;
+    const long total_cnt = Count();
+    long accu = 0;
+    out << std::fixed;
+    for (int i = 0; i < N_SID_SPECIAL; ++i) {
+      accu += hist[i];
+      if (hist[i] != 0) {
+        double cdf = (double)accu / (double)total_cnt;
+        out << i+1 << "," << buckets[i] << "," << hist[i] << "," << cdf << std::endl;
+      }
+    }
+    return out.str();
+  }
+};
+
+
 std::ostream &operator<<(std::ostream &out, const SpecialHistogram& h)
 {
   // percentile calc
@@ -277,6 +347,15 @@ std::ostream &operator<<(std::ostream &out, const SpecialHistogram& h)
   return out;
 }
 
+  std::ostream &operator<<(std::ostream &out, const SIDHistogram& h)
+  {
+    auto total_cnt = h.Count();
+    out << "sid bucket total:" << total_cnt<< "\n";
+    for (int i = 0; i < N_SID_SPECIAL; i++) {
+      out << h.buckets[i] << ": " << h.hist[i] << std::endl;
+    }
+    return out;
+  }
 
 template <int N, int Offset, int Bucket>
 std::ostream &operator<<(std::ostream &out, const Histogram<N, Offset, Bucket>& h)

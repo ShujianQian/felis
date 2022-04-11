@@ -758,6 +758,19 @@ bool EpochExecutionDispatchService::Peek_IPPT(int core_id, PriorityTxn *&txn, in
         return false;
     */
 
+    if (util::Instance<EpochManager>().current_phase() == EpochPhase::Insert){
+      if (PriorityTxnService::g_stop_insert_IPPT) {
+        return false;
+      }
+    }
+
+    if (util::Instance<EpochManager>().current_phase() == EpochPhase::Initialize){
+      if (PriorityTxnService::g_stop_init_IPPT) {
+        return false;
+      }
+    }
+
+
     auto &tq = queues[core_id]->tq;
     auto tstart = tq.start.load(std::memory_order_acquire);
     if (tstart < tq.end.load(std::memory_order_acquire)) {
@@ -771,7 +784,6 @@ bool EpochExecutionDispatchService::Peek_IPPT(int core_id, PriorityTxn *&txn, in
                 while (tstart < tq.end.load(std::memory_order_acquire) && candidate->epoch < epoch_nr)
                     candidate = tq.q + ++tstart;
                 tq.start.store(tstart, std::memory_order_release);
-
                 // trace(TRACE_PRIORITY "core {} SKIPPED from pos {} ({}) to pos {} ({})", core_id, from, from * 32 + core_id + 1, tstart, tstart * 32 + core_id + 1);
             }
 

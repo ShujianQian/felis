@@ -240,17 +240,15 @@ void AllocStateTxnWorker::Run()
   client->commit_buffer->Clear(t);
 }
 
-void CallTxnsWorker::initialization_phase_run()
-{
+  void CallTxnsWorker::initialization_phase_run()  __attribute__((optnone)) {
     auto nr_nodes = client->conf.nr_nodes();
     auto batch_cnt = client->per_core_cnts[t];
     auto batch_cnt_len = nr_nodes * nr_nodes
-            * PromiseRoutineTransportService::kPromiseMaxLevels;
+                         * PromiseRoutineTransportService::kPromiseMaxLevels;
     std::fill(batch_cnt, batch_cnt + batch_cnt_len, 0);
 
     set_urgent(true);
     auto batch_txn_set = client->cur_txns.load()->per_core_txns[t];
-
     while (AllocStateTxnWorker::comp.load() != 0) _mm_pause();
 
     /* Code From ExecutionRoutine */
@@ -265,37 +263,29 @@ void CallTxnsWorker::initialization_phase_run()
     PieceRoutine *next_r;
     go::Scheduler *sched = scheduler();
 
-    EpochPhase curr_phase = util::Instance<EpochManager>().current_phase();
-//    if (curr_phase != EpochPhase::Insert) {
-    const uint64_t epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
-    util::Instance<PriorityTxnService>().UpdateEpochStartTime(epoch_nr);
-    util::Instance<PriorityTxnService>().ReportPhaseStart(curr_phase);
-
-//    }
-
     auto should_pop_pri =
-            PromiseRoutineDispatchService::GenericDispatchPeekListener(
-                    [&next_r, sched]
-                            (PieceRoutine *r,
-                             BasePieceCollection::ExecutionRoutine *state) -> bool {
-                        if (state != nullptr) {
-                            if (state->is_detached()) {
-                                trace(TRACE_EXEC_ROUTINE
-                                      "Wakeup Coroutine {}",
-                                      (void *) state);
-                                state->Init();
-                                sched->WakeUp(state);
-                            } else {
-                                trace(TRACE_EXEC_ROUTINE
-                                      "Found a sleeping Coroutine, but it's already awaken.");
-                            }
-                            return false;
-                        }
-                        if (!r->is_priority) // is not a piece from priority txn
-                            return false;
-                        next_r = r;
-                        return true;
-                    });
+        PromiseRoutineDispatchService::GenericDispatchPeekListener(
+            [&next_r, sched]
+                (PieceRoutine *r,
+                 BasePieceCollection::ExecutionRoutine *state) -> bool {
+              if (state != nullptr) {
+                if (state->is_detached()) {
+                  trace(TRACE_EXEC_ROUTINE
+                        "Wakeup Coroutine {}",
+                        (void *) state);
+                  state->Init();
+                  sched->WakeUp(state);
+                } else {
+                  trace(TRACE_EXEC_ROUTINE
+                        "Found a sleeping Coroutine, but it's already awaken.");
+                }
+                return false;
+              }
+              if (!r->is_priority) // is not a piece from priority txn
+                return false;
+              next_r = r;
+              return true;
+            });
 
     unsigned long cnt = 0x01F;
     PriorityTxn *txn;
@@ -303,149 +293,157 @@ void CallTxnsWorker::initialization_phase_run()
     size_t batch_txn_cnt = 0;
     const size_t batch_length = batch_txn_set->nr;
 
+    EpochPhase curr_phase = util::Instance<EpochManager>().current_phase();
+    const uint64_t epoch_nr = util::Instance<EpochManager>().current_epoch_nr();
+    util::Instance<PriorityTxnService>().ReportPhaseStart(curr_phase);
+    bool epoch_updated = false;
     bool done = false;
     do {
+      if (core_id == 0) {
+        trace(TRACE_IPPT "At the beginning of init_phase_run_while");
+      }
+      if (svc.Peek(core_id, should_pop_pri)) {
         if (core_id == 0) {
-            trace(TRACE_IPPT "At the beginning of init_phase_run_while");
+          trace(TRACE_IPPT "Should pop pri");
         }
-//        if (curr_phase != EpochPhase::Insert) {
-        if (svc.Peek(core_id, should_pop_pri)) {
-            if (core_id == 0) {
-                trace(TRACE_IPPT "Should pop pri");
-            }
-            auto rt = next_r;
+        auto rt = next_r;
 
-            util::Instance<PriorityTxnService>().UpdateProgress(core_id,
-                                                                rt->sched_key);
-            rt->callback(rt);
-            svc.Complete(core_id,
-                         PromiseRoutineDispatchService::CompleteType::PriorityPiece);
-            continue;
-        }
+        util::Instance<PriorityTxnService>().UpdateProgress(core_id,
+                                                            rt->sched_key);
+        rt->callback(rt);
+        svc.Complete(core_id,
+                     PromiseRoutineDispatchService::CompleteType::PriorityPiece);
 
-        if (svc.Peek_IPPT(core_id, txn, (int) (batch_length - batch_txn_cnt), false)) {
-            if (core_id == 0) {
-                trace(TRACE_IPPT "Should pop txn");
-            }
-            txn->Run();
-            svc.Complete(core_id,
-                         PromiseRoutineDispatchService::CompleteType::PriorityInit);
-            continue;
-        }
-        // trace(TRACE_IPPT "Core {} Phase {}", t, client->callback.phase);
+        continue;
+      }
 
+      if (!epoch_updated) {
+        util::Instance<PriorityTxnService>().UpdateEpochStartTime(epoch_nr);
+        epoch_updated = true;
+      }
+
+      if (svc.Peek_IPPT(core_id, txn, (int) (batch_length - batch_txn_cnt), false)) {
         if (core_id == 0) {
-            trace(TRACE_IPPT "Falling back to run batch");
+          trace(TRACE_IPPT "Should pop txn");
         }
-//        }
+        txn->Run();
+        svc.Complete(core_id,
+                     PromiseRoutineDispatchService::CompleteType::PriorityInit);
+        continue;
+      }
+      // trace(TRACE_IPPT "Core {} Phase {}", t, client->callback.phase);
 
-        if (batch_txn_cnt < batch_txn_set->nr) {
-            batch_txn = batch_txn_set->txns[batch_txn_cnt];
-            batch_txn_cnt++;
+      if (core_id == 0) {
+        trace(TRACE_IPPT "Falling back to run batch");
+      }
 
-            cnt++;
-            if ((cnt & 0x01F) == 0) {
-                transport.PeriodicIO(core_id);
-            } // Periodic flush
+      if (batch_txn_cnt < batch_txn_set->nr) {
+        batch_txn = batch_txn_set->txns[batch_txn_cnt];
+        batch_txn_cnt++;
 
-            batch_txn->ResetRoot();
-            std::invoke(mem_func, batch_txn);
-            client->conf.CollectBufferPlan(batch_txn->root_promise(),
-                                           batch_cnt);
+        cnt++;
+        if ((cnt & 0x01F) == 0) {
+          transport.PeriodicIO(core_id);
+        } // Periodic flush
+        batch_txn->ResetRoot();
+        std::invoke(mem_func, batch_txn);
+        client->conf.CollectBufferPlan(batch_txn->root_promise(),
+                                       batch_cnt);
+        // svc.Complete(core_id);
+        continue;
+      } else {
+        util::Instance<PriorityTxnService>().ReportPhaseEnd(curr_phase);
+        bool node_finished =
+            client->conf.FlushBufferPlan(client->per_core_cnts[t]);
 
-            // svc.Complete(core_id);
-            continue;
-        } else {
-            util::Instance<PriorityTxnService>().ReportPhaseEnd(curr_phase);
-            bool node_finished =
-                    client->conf.FlushBufferPlan(client->per_core_cnts[t]);
+        // Try to assign a default partition scheme if nothing has been
+        // assigned. Because transactions are already round-robinned, there is no
+        // imbalanced here.
 
-            // Try to assign a default partition scheme if nothing has been
-            // assigned. Because transactions are already round-robinned, there is no
-            // imbalanced here.
+        // These are used for corescaling, I think they are deprecated.
+        long extra_offset = 0;
+        for (auto i = client->core_limit; i < t; i++) {
+          extra_offset += client->cur_txns.load()->per_core_txns[i]->nr;
+        }
+        extra_offset %= client->core_limit;
 
-            // These are used for corescaling, I think they are deprecated.
-            long extra_offset = 0;
-            for (auto i = client->core_limit; i < t; i++) {
-                extra_offset += client->cur_txns.load()->per_core_txns[i]->nr;
-            }
-            extra_offset %= client->core_limit;
+        auto &transport = util::Impl<PromiseRoutineTransportService>();
+        for (size_t i = 0; i < batch_txn_set->nr; i++) {
+          auto txn = batch_txn_set->txns[i];
+          auto aff = t;
 
-            auto &transport = util::Impl<PromiseRoutineTransportService>();
-            for (size_t i = 0; i < batch_txn_set->nr; i++) {
-                auto txn = batch_txn_set->txns[i];
-                auto aff = t;
+          if (client->callback.phase == EpochPhase::Execute
+              && t >= client->core_limit) {
+            // auto avail_nr_zones = client->core_limit / mem::kNrCorePerNode;
+            // auto zone = t % avail_nr_zones;
+            aff = (i + extra_offset) % client->core_limit;
+          }
 
-                if (client->callback.phase == EpochPhase::Execute
-                        && t >= client->core_limit) {
-                    // auto avail_nr_zones = client->core_limit / mem::kNrCorePerNode;
-                    // auto zone = t % avail_nr_zones;
-                    aff = (i + extra_offset) % client->core_limit;
-                }
+          auto root = txn->root_promise();
+          root->AssignAffinity(aff);
+          root->Complete();
 
-                auto root = txn->root_promise();
-                root->AssignAffinity(aff);
-                root->Complete();
-
-                // Doesn't seems to work that well, but just in case it works well for some
-                // workloads. For example, issuing takes a longer time.
-                if ((i & 0xFF) == 0) transport.PrefetchInbound();
-            }
+          // Doesn't seems to work that well, but just in case it works well for some
+          // workloads. For example, issuing takes a longer time.
+          if ((i & 0xFF) == 0) transport.PrefetchInbound();
+        }
 
 
-            set_urgent(false);
+        set_urgent(false);
 
-            // Here we set the finished flag a bit earlier, so that FinishCompletion()
-            // could create the ExecutionRoutine a bit earlier.
-            finished = true;
+        // Here we set the finished flag a bit earlier, so that FinishCompletion()
+        // could create the ExecutionRoutine a bit earlier.
+        finished = true;
 
-            // TODO: Shujian: removed finish completion because it could spawn ExecutionRoutine
+        // TODO: Shujian: removed finish completion because it could spawn ExecutionRoutine
 //            transport.FinishCompletion(0);
 
-            // Granola doesn't support out of order scheduling. In the original paper,
-            // Granola uses a single thread to issue. We use multiple threads, so here we
-            // have to barrier.
-            if ((EpochClient::g_enable_granola || EpochClient::g_enable_pwv)
-                    && client->callback.phase == EpochPhase::Execute) {
-                g_finished.fetch_add(1);
+        // Granola doesn't support out of order scheduling. In the original paper,
+        // Granola uses a single thread to issue. We use multiple threads, so here we
+        // have to barrier.
+        if ((EpochClient::g_enable_granola || EpochClient::g_enable_pwv)
+            && client->callback.phase == EpochPhase::Execute) {
+          g_finished.fetch_add(1);
 
-                while (EpochClient::g_enable_granola
-                        && g_finished.load() != NodeConfiguration::g_nr_threads)
-                    _mm_pause();
-            }
-
-            if (client->callback.phase == EpochPhase::Execute) {
-                VHandle::Quiescence();
-                RowEntity::Quiescence();
-
-                mem::GetDataRegion().Quiescence();
-            } else if (client->callback.phase == EpochPhase::Initialize) {
-            } else if (client->callback.phase == EpochPhase::Insert) {
-//                uint64_t tsc = __rdtsc();
-                util::Instance<GC>().RunGC();
-//                logger->info("core {} gc took {}us.", core_id, ((double) __rdtsc() - tsc) / 2200);
-            }
-
-            trace(TRACE_COMPLETION
-                  "complete issueing and flushing network {}",
-                  node_finished);
-
-            client->completion.Complete();
-            if (node_finished) {
-                client->completion.Complete();
-            }
+          while (EpochClient::g_enable_granola
+                 && g_finished.load() != NodeConfiguration::g_nr_threads)
+            _mm_pause();
         }
+
+        if (client->callback.phase == EpochPhase::Execute) {
+          VHandle::Quiescence();
+          RowEntity::Quiescence();
+
+          mem::GetDataRegion().Quiescence();
+        } else if (client->callback.phase == EpochPhase::Initialize) {
+        } else if (client->callback.phase == EpochPhase::Insert) {
+//                uint64_t tsc = __rdtsc();
+          util::Instance<GC>().RunGC();
+//                logger->info("core {} gc took {}us.", core_id, ((double) __rdtsc() - tsc) / 2200);
+        }
+
+        trace(TRACE_COMPLETION
+              "complete issueing and flushing network {}",
+              node_finished);
+
+        client->completion.Complete();
+        if (node_finished) {
+          client->completion.Complete();
+        }
+      }
 
 //        if (!svc.IsReady(core_id))
 //            done = true; // piece issuing on this core has not finished, quit
 //        else
-        if (!transport.PeriodicIO(core_id))
-            done = true; // did not receive new piece from network
+      if (!transport.PeriodicIO(core_id))
+        done = true; // did not receive new piece from network
     } while (!done);
+
+
     trace(TRACE_IPPT "Coroutine Exit on core {}", core_id);
 
     trace(TRACE_EXEC_ROUTINE "Coroutine Exit on core {}", core_id);
-}
+  }
 
 void CallTxnsWorker::execution_phase_run(){
   auto nr_nodes = client->conf.nr_nodes();

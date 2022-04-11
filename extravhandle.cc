@@ -200,6 +200,10 @@ VarStr *DoublyLinkedListExtraVHandle::ReadWithVersion(uint64_t sid,
         }
     }
 
+    if (last_batch_version > p->version){
+      return (VarStr *) last_batch_obj;
+    }
+
     abort_if(p->version >= sid, "p->version >= sid, {} >= {}", p->version, sid);
     abort_if(p->version < max_exec_sid, "p->version < max_exec_sid, {} < {}", p->version, max_exec_sid);
 

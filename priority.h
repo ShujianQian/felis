@@ -23,6 +23,7 @@ class PriorityTxnService {
   uint64_t global_last_sid;
   util::SpinLock lock; // for global_last_sid
 
+
  public:
   class Bitmap {
     std::vector<bool> bitset;
@@ -179,7 +180,9 @@ class PriorityTxnService {
   static int execute_piece_time;
   static int init_piece_time;
   static int insert_piece_time;
-
+  static util::MCSSpinLock g_tsc_spinlock;
+  static std::atomic<bool> g_stop_insert_IPPT;
+  static std::atomic<bool> g_stop_init_IPPT;
 
  private:
   class PieceCounter {

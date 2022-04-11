@@ -37,7 +37,8 @@ static struct ProbeMain {
 
     agg::Agg<agg::Average> init_queue_avg_insert;
     agg::Agg<agg::Max<std::tuple<uint64_t, int>>> init_queue_max_insert;
-    agg::Agg<agg::Histogram<512, 0, 2>> init_queue_hist_insert;
+  agg::Agg<agg::Histogram<512, 0, 2>> init_queue_hist_insert;
+  agg::Agg<agg::SIDHistogram> init_queue_hist_insert_sid;
 
     agg::Agg<agg::Average> init_queue_avg_initialize;
     agg::Agg<agg::Max<std::tuple<uint64_t, int>>> init_queue_max_initialize;
@@ -128,7 +129,8 @@ thread_local struct ProbePerCore {
     AGG(init_queue_avg_insert);
     AGG(init_queue_max_insert);
     AGG(init_queue_hist_insert);
-    AGG(init_queue_avg_initialize);
+    AGG(init_queue_hist_insert_sid);
+  AGG(init_queue_avg_initialize);
     AGG(init_queue_max_initialize);
     AGG(init_queue_hist_initialize);
     AGG(init_queue_avg_execute);
@@ -300,12 +302,21 @@ template <> void OnProbe(felis::probes::PriInitQueueTime p)
   statcnt.init_queue_max.addData(p.time, std::make_tuple(p.sid, core_id));
 }
 
+uint64_t num_txn = felis::EpochClient::g_workload_client-> NumberOfTxns();
+uint64_t g_strip_batched = 1;
+uint64_t g_strip_priority = 32;
+uint64_t max_batch_seq = num_txn + (num_txn - 1) / g_strip_batched * 32;
+uint64_t sid2seq(uint64_t sid) { return sid >> 8 & 0xFFFFFF; }
 template <> void OnProbe(felis::probes::PriInitQueueTimeInsert p)
 {
     int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
     statcnt.init_queue_avg_insert << p.time;
     statcnt.init_queue_hist_insert << p.time;
     statcnt.init_queue_max_insert.addData(p.time, std::make_tuple(p.sid, core_id));
+    if (p.time > 10000) {
+      uint64_t seq = (sid2seq(p.sid) - max_batch_seq - 1);
+      statcnt.init_queue_hist_insert_sid << seq;
+    }
 }
 
 template <> void OnProbe(felis::probes::PriInitQueueTimeInitialize p)
@@ -506,6 +517,7 @@ ProbeMain::~ProbeMain()
             << std::endl;
   std::cout << "Memmove/Sorting Distance Avg: " << global.absorb_memmove_avg << std::endl;
 #endif
+
   std::cout << "[Pri-stat] batch piece " << global.piece_avg() << " us "
             << "(max: " << global.piece_max() << ")" << std::endl;
   std::cout << global.piece_hist();
@@ -520,6 +532,7 @@ ProbeMain::~ProbeMain()
         std::cout << "[Pri-stat] init_queue_insert " << global.init_queue_avg_insert() << " us "
                   << "(max: " << global.init_queue_max_insert() << ")" << std::endl;
         std::cout << global.init_queue_hist_insert();
+//        std::cout << global.init_queue_hist_insert_sid();
     }
 
     if (global.init_queue_avg_initialize().getCnt() != 0) {
@@ -680,14 +693,18 @@ ProbeMain::~ProbeMain()
     double init_sum = global.total_latency_avg_insert.sum + global.total_latency_avg_initialize.sum;
     double init_tot_lat_avg = init_sum / init_cnt;
     std::cout << "[Pri-stat] init_tot_lat_avg " << init_tot_lat_avg << " us " << std::endl;
+    std::cout << "[Pri-stat] total_latency_insert " << global.total_latency_avg_insert() << std::endl;
+    std::cout << "[Pri-stat] total_latency_initialize " << global.total_latency_avg_initialize() << std::endl;
     std::cout << "[Pri-stat] total_latency_execute " << global.total_latency_avg_execute() << " us " << std::endl;
-    
+
     double abort_rate = 100.0 * global.init_fail_cnt.sum / cnt;
     double abort_rate_insert = 100.0 * global.init_fail_cnt_insert_phase.sum / global.init_queue_avg_insert.getCnt();
     double abort_rate_init = 100.0 * global.init_fail_cnt_init_phase.sum / global.init_queue_avg_initialize.getCnt();
     double abort_rate_exec = 100.0 * global.init_fail_cnt_exec_phase.sum / global.init_queue_avg_execute.getCnt();
-    std::cout << "[Pri-stat] abort_rate_init " << abort_rate_init << " unit % "<< std::endl;
-    std::cout << "[Pri-stat] abort_rate_exec " << abort_rate_exec << " unit % "<< std::endl;
+//    std::cout << "[Pri-stat] abort_rate_insert " << abort_rate_insert << " unit % "<< std::endl;
+//    std::cout << "[Pri-stat] abort_rate_init " << abort_rate_init << " unit % "<< std::endl;
+//    std::cout << "[Pri-stat] abort_rate_exec " << abort_rate_exec << " unit % "<< std::endl;
+    std::cout << "[Pri-stat] abort_rate " << abort_rate << " unit % "<< std::endl;
 
     result.insert({"8_1", abort_rate});
     // 8_2 txn count
@@ -699,6 +716,7 @@ ProbeMain::~ProbeMain()
     long batch_tpt = total_nr_txns * 1000 / dur; // duration is in ms
     long pri_tpt = batch_tpt * cnt / total_nr_txns;
     long pri_tpt_1 = cnt * 1000 / felis::PriorityTxnService::execute_piece_time;
+    std::cout << "[Pri-stat] throughput " << pri_tpt_1  << std::endl;
 
     long cnt_insert = global.total_latency_avg_insert.getCnt() + global.init_queue_avg_insert.getCnt();
     long pri_tpt_insert = cnt_insert * 1000 / felis::PriorityTxnService::insert_piece_time;
@@ -709,7 +727,7 @@ ProbeMain::~ProbeMain()
     std::cout << "[Pri-stat] pri_tpt_insert " << static_cast<int>(pri_tpt_insert) << std::endl;
     std::cout << "[Pri-stat] pri_tpt_init " << static_cast<int>(pri_tpt_init) << std::endl;
     std::cout << "[Pri-stat] pri_tpt_exec " << static_cast<int>(pri_tpt_exec) << std::endl;
-    
+
     int total_tpt = batch_tpt + pri_tpt;
     result.insert({"9_1", static_cast<int>(batch_tpt)});
     result.insert({"9_2", static_cast<int>(pri_tpt_1)});
