@@ -325,11 +325,32 @@ class PriorityTxn {
   }
 
   template <typename Table>
-  VHandle* SearchExistingRow(typename Table::Key key) {
+  VHandle* SearchExistingRow(typename Table::Key key) /* __attribute__((optnone)) */ {
+
+    uint64_t search_start = __rdtsc();
+    uint64_t timer1_start, timer1_end, timer1_elapse;
+    uint64_t timer2_start, timer2_end, timer2_elapse;
+    uint64_t timer3_start, timer3_end, timer3_elapse;
     int table = static_cast<int>(Table::kTable);
+
+    timer1_start = __rdtsc();
     auto rel = util::Instance<TableManager>().GetTable(table);
+    timer1_end = __rdtsc();
+    timer1_elapse = (timer1_end - timer1_start) / 2200;
+
+    timer2_start = __rdtsc();
     auto keyVarStr = key.Encode();
-    return rel->Search(keyVarStr->ToView(), this->sid);
+    timer2_end = __rdtsc();
+    timer2_elapse = (timer2_end - timer2_start) / 2200;
+
+    timer3_start = __rdtsc();
+    auto ret = rel->Search(keyVarStr->ToView(), this->sid);
+    timer3_end = __rdtsc();
+    timer3_elapse = (timer3_end - timer3_start) / 2200;
+
+    uint64_t search_end = __rdtsc();
+//    if ((search_end - search_start) / 2200 > 5000) abort();
+    return ret;
   }
 
   bool CheckUpdateConflict(VHandle* handle);
