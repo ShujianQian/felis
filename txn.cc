@@ -254,6 +254,7 @@ void BaseFutureValue::Signal()
 void BaseFutureValue::Wait()
 {
   long wait_cnt = 0;
+  int preempt_times = 0;
   int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
   auto &transport = util::Impl<PromiseRoutineTransportService>();
   
@@ -265,9 +266,9 @@ void BaseFutureValue::Wait()
     }
 
     if ((wait_cnt & 0x00FFF) == 0) {
-
+      preempt_times++;
       auto routine = go::Scheduler::Current()->current_routine();
-      if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt()) {
+      if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt(preempt_times)) {
         continue;
       }
     }

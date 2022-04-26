@@ -17,6 +17,7 @@ struct WaitState {
   BasePieceCollection::ExecutionRoutine *state;
   uint64_t sched_key;
   uint64_t preempt_ts;
+  uint64_t preempt_factor; // multiplier/modifier for back-off behavior
 };
 
 struct PriorityQueueHashEntry : public util::GenericListNode<PriorityQueueHashEntry> {
@@ -69,7 +70,7 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   };
  public:
   static unsigned int Hash(uint64_t key) { return key >> 8; }
-  static constexpr int kOutOfOrderWindow = 31;
+  static constexpr int kOutOfOrderWindow = 25;
 
   using PriorityQueueHashHeader = util::GenericListNode<PriorityQueueHashEntry>;
  private:
@@ -103,6 +104,8 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   struct State {
     uint64_t current_sched_key;
     uint64_t ts;
+    uint64_t last_preempt_sched_key;
+    uint64_t last_preempt_repeats;
     CompleteCounter complete_counter;
 
     static constexpr int kSleeping = 0;
@@ -138,7 +141,7 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   void Add(int core_id, PieceRoutine **routines, size_t nr_routines) final override;
   void AddBubble() final override;
   bool Peek(int core_id, DispatchPeekListener &should_pop) final override;
-  bool Preempt(int core_id, BasePieceCollection::ExecutionRoutine *state) final override;
+  bool Preempt(int core_id, BasePieceCollection::ExecutionRoutine *state, int preempt_factor = 1) final override;
   void Reset() final override;
   void Complete(int core_id) final override;
   int TraceDependency(uint64_t key) final override;

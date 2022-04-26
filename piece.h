@@ -69,7 +69,7 @@ class BasePieceCollection {
     void Run() final override;
     void AddToReadyQueue(go::Scheduler::Queue *q, bool next_ready = false) final override;
 
-    bool Preempt();
+    bool Preempt(int preempt_factor);
   };
 
   static_assert(sizeof(ExecutionRoutine) <= CACHE_LINE_SIZE);
@@ -133,7 +133,7 @@ class PromiseRoutineDispatchService {
 
   virtual void Add(int core_id, PieceRoutine **r, size_t nr_routines) = 0;
   virtual void AddBubble() = 0;
-  virtual bool Preempt(int core_id, BasePieceCollection::ExecutionRoutine *state) = 0;
+  virtual bool Preempt(int core_id, BasePieceCollection::ExecutionRoutine *state, int preempt_factor) = 0;
   virtual bool Peek(int core_id, DispatchPeekListener &should_pop) = 0;
   virtual void Reset() = 0;
   virtual void Complete(int core_id) = 0;

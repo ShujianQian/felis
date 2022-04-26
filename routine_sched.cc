@@ -50,7 +50,8 @@ bool ConservativePriorityScheduler::ShouldPickWaiting(const WaitState &ws)
 {
   if (len == 0)
     return true;
-  if (q[0].key > ws.sched_key)
+  //logger->info("queue: {} wait: {}",q[0].key,ws.sched_key);
+  if (q[0].key > ws.sched_key+10000*ws.preempt_factor)
     return true;
   return false;
 }
@@ -577,7 +578,7 @@ void EpochExecutionDispatchService::AddBubble()
   tot_bubbles.fetch_add(1);
 }
 
-bool EpochExecutionDispatchService::Preempt(int core_id, BasePieceCollection::ExecutionRoutine *routine_state)
+bool EpochExecutionDispatchService::Preempt(int core_id, BasePieceCollection::ExecutionRoutine *routine_state, int preempt_factor)
 {
   auto &lock = queues[core_id]->lock;
   bool can_preempt = true;
@@ -597,11 +598,12 @@ bool EpochExecutionDispatchService::Preempt(int core_id, BasePieceCollection::Ex
   ws.preempt_ts = state.ts;
   ws.sched_key = state.current_sched_key;
   ws.state = routine_state;
+  ws.preempt_factor = preempt_factor;
 
   // There is nothing to switch to!
-  if (q.waiting.len == 0 && q.sched_pol->ShouldPickWaiting(ws))
+  if (q.waiting.len == 0 && q.sched_pol->ShouldPickWaiting(ws)){
     return false;
-
+  }
   q.waiting.len++;
   return true;
 }
