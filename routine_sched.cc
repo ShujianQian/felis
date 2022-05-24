@@ -50,8 +50,12 @@ bool ConservativePriorityScheduler::ShouldPickWaiting(const WaitState &ws)
 {
   if (len == 0)
     return true;
-  //logger->info("queue: {} wait: {}",q[0].key,ws.sched_key);
-  if (q[0].key > ws.sched_key+10000*ws.preempt_factor)
+    
+  // this is the check that allows preemption
+  // preempt_key is sched_key + offset
+
+  //if (q[0].key > ws.sched_key)
+  if (q[0].key > ws.preempt_key)
     return true;
   return false;
 }
@@ -521,16 +525,20 @@ retry:
   if (q.sched_pol->ShouldRetryBeforePick(&zq.start, &zq.end, &q.pending.start, &q.pending.end))
     goto retry;
 
-  auto &ws = q.waiting.states[q.waiting.off];
+  //auto &ws = q.waiting.states[q.waiting.off];
+  auto &ws = q.waiting.states[0]; // min-heap entry is always at the front
   if (q.waiting.len > 0
-      && (q.waiting.len == kOutOfOrderWindow
-          || q.sched_pol->ShouldPickWaiting(q.waiting.states[q.waiting.off]))) {
+      && (q.waiting.len == kOutOfOrderWindow || q.sched_pol->ShouldPickWaiting(ws)) ) {
     // TODO: is this right?
     if (should_pop(nullptr, ws.state)) {
-      q.waiting.off = (q.waiting.off + 1) % kOutOfOrderWindow;
-      q.waiting.len--;
+
+      //if(core_id==0) logger->info("popping on core {}, heap size {} with key {}, faux {}", core_id, q.waiting.len, ws.sched_key,ws.preempt_key);
+      //q.waiting.off = (q.waiting.off + 1) % kOutOfOrderWindow;
       state.current_sched_key = ws.sched_key;
       state.ts++;
+      std::pop_heap(q.waiting.states, q.waiting.states + q.waiting.len, Greater);
+      q.waiting.len--;
+      
       return true;
     }
     return false;
@@ -594,17 +602,38 @@ bool EpochExecutionDispatchService::Preempt(int core_id, BasePieceCollection::Ex
 
   abort_if(q.waiting.len == kOutOfOrderWindow, "out-of-order scheduling window is full");
 
-  auto &ws = q.waiting.states[(q.waiting.off + q.waiting.len) % kOutOfOrderWindow];
+  //auto &ws = q.waiting.states[(q.waiting.off + q.waiting.len) % kOutOfOrderWindow];
+  auto &ws = q.waiting.states[q.waiting.len]; // using a heap, finding the next slot is easy
+
+//since this is a min-heap, if we're re-inserting a failed attempt, it will be on top of itself
+  if(ws.sched_key == state.current_sched_key){
+    ws.preempt_times++;
+  }else{
+    // preempt factor doesn't always work (why?)
+    // sometimes SimpleSync::WaitForData repeatedly runs from start instead of looping
+    ws.preempt_times = preempt_factor;
+
+    // this should only be happening on first preemption. Otherwise, 2+ threads are touching the queue at a time
+    abort_if(preempt_factor > 1, "");
+  }
+
   ws.preempt_ts = state.ts;
   ws.sched_key = state.current_sched_key;
   ws.state = routine_state;
-  ws.preempt_factor = preempt_factor;
+  ws.preempt_key = state.current_sched_key + keyThreshold * std::min(ws.preempt_times, max_backoff);
+
 
   // There is nothing to switch to!
   if (q.waiting.len == 0 && q.sched_pol->ShouldPickWaiting(ws)){
+    
+    //if(core_id==0) logger->info("push fail on core {}, heap size {} with key {}, faux {}, factor {}", core_id,q.waiting.len, ws.sched_key,ws.preempt_key, std::min(ws.preempt_times, (uint64_t)5));
     return false;
   }
+   // this should be all we need to add to the heap
+
+  //if(core_id==0) logger->info("push on core {}, heap size {} with key {}, faux {}, factor {}", core_id,q.waiting.len, ws.sched_key,ws.preempt_key, std::min(ws.preempt_times, (uint64_t)5));
   q.waiting.len++;
+  std::push_heap(q.waiting.states, q.waiting.states + q.waiting.len, Greater);
   return true;
 }
 

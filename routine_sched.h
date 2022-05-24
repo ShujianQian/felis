@@ -17,8 +17,20 @@ struct WaitState {
   BasePieceCollection::ExecutionRoutine *state;
   uint64_t sched_key;
   uint64_t preempt_ts;
-  uint64_t preempt_factor; // multiplier/modifier for back-off behavior
+  uint64_t preempt_key; // modified scheduling key for out-of-order behaviors
+  uint64_t preempt_times;
 };
+
+// for use ordering WaitStates in a heap
+// as this performs a > b instead of a < b, this functions as a min-heap
+static bool Greater(const WaitState &a, const WaitState &b) {
+  if (a.preempt_key > b.preempt_key)
+    return true;
+  if (a.preempt_key < b.preempt_key)
+    return false;
+  //edge case, overlap, use original sched key to tie-break
+  return a.sched_key > b.sched_key;
+}
 
 struct PriorityQueueHashEntry : public util::GenericListNode<PriorityQueueHashEntry> {
   util::GenericListNode<PriorityQueueValue> values;
@@ -71,6 +83,8 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
  public:
   static unsigned int Hash(uint64_t key) { return key >> 8; }
   static constexpr int kOutOfOrderWindow = 25;
+  static constexpr int keyThreshold = 5000;
+  static constexpr uint64_t max_backoff = 20;
 
   using PriorityQueueHashHeader = util::GenericListNode<PriorityQueueHashEntry>;
  private:
@@ -86,9 +100,9 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
     } pending; // Pending inserts into the heap and the hashtable
 
     struct {
-      // Ring-buffer.
+      // Min-heap
       WaitState states[kOutOfOrderWindow];
-      uint32_t off;
+      uint32_t off; // unused, remove
       uint32_t len;
     } waiting;
 
@@ -104,8 +118,6 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   struct State {
     uint64_t current_sched_key;
     uint64_t ts;
-    uint64_t last_preempt_sched_key;
-    uint64_t last_preempt_repeats;
     CompleteCounter complete_counter;
 
     static constexpr int kSleeping = 0;
@@ -141,7 +153,7 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   void Add(int core_id, PieceRoutine **routines, size_t nr_routines) final override;
   void AddBubble() final override;
   bool Peek(int core_id, DispatchPeekListener &should_pop) final override;
-  bool Preempt(int core_id, BasePieceCollection::ExecutionRoutine *state, int preempt_factor = 1) final override;
+  bool Preempt(int core_id, BasePieceCollection::ExecutionRoutine *state, int preempt_factor) final override;
   void Reset() final override;
   void Complete(int core_id) final override;
   int TraceDependency(uint64_t key) final override;
