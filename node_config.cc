@@ -124,15 +124,9 @@ void LocalDispatcherImpl::FlushOnCore(int tid, unsigned int start, unsigned int 
     for (int j = start; j < end; j++) {
       auto r = q->routines[j];
       auto core = 0;
-      
-      // move pieces to cores corresponding to their affinity
-      // affinity = core_num + node_id x cores_per_node
-      // in tpcc, each warehouse has affinity for a certain core
 
-      // this area is very performance sensitive
-      // shouldn't have txns with affinity for node 1 cores on node 2, but narrower checks hurt performance
-      if (r->affinity < nr_threads*node_id) {
-        core = r->affinity % nr_threads;
+      if (r->affinity < nr_threads) {
+        core = r->affinity;
       } else {
         core = (delta + j - start) % nr_threads;
       }
