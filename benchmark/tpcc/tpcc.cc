@@ -837,9 +837,11 @@ void Loader<LoaderType::Order>::DoLoad()
 
 }
 
-static constexpr int kTPCCTxnMix[] = {
-  45, 43, 4, 4, 4
-};
+static constexpr int kTPCCTxnMix[] = {45, 43, 4, 4, 4}; // TPC-C Normal workload
+//static constexpr int kTPCCTxnMix[] = {100, 0, 0, 0, 0}; // new order only
+//static constexpr int kTPCCTxnMix[] = {0, 100, 0, 0, 0}; // payment only
+//static constexpr int kTPCCTxnMix[] = {50, 50, 0, 0, 0}; // new order and payment
+
 
 felis::BaseTxn *Client::CreateTxn(uint64_t serial_id)
 {
