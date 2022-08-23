@@ -513,7 +513,10 @@ void TcpNodeTransport::TransportFutureValue(BaseFutureValue *val)
 
   for (uint8_t i = 0; i < val->nr_subscribed_nodes(); i++) {
     auto node = val->subscribed_node(i);
-    if (node == conf.node_id()) continue;
+    if (node == conf.node_id()) {
+      val->setReady();
+      continue;
+    }
 
     auto out = outgoing_channels.at(node);
     // Fill in the correct buffer_size

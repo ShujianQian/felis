@@ -234,13 +234,16 @@ void BasePieceCollection::ExecutionRoutine::Run()
   trace(TRACE_EXEC_ROUTINE "Coroutine Exit on core {} give up {}", core_id, give_up);
 }
 
-bool BasePieceCollection::ExecutionRoutine::Preempt(int preempt_factor)
+bool BasePieceCollection::ExecutionRoutine::Preempt(uint64_t sid, uint64_t ver)
 {
+ 
   auto &svc = util::Impl<PromiseRoutineDispatchService>();
   int core_id = scheduler()->thread_pool_id() - 1;
   bool spawn = true;
 
-  if (svc.Preempt(core_id, this, preempt_factor)) {
+  //logger->info("preempt core: {} sid: {} ver: {}",core_id,sid,ver);
+
+  if (svc.Preempt(core_id, this, sid, ver)) {
  sleep:
     if (spawn) {
       sched->WakeUp(new ExecutionRoutine());

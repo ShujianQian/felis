@@ -164,7 +164,7 @@ class EpochClient {
   static size_t g_txn_per_epoch;
   static constexpr size_t kMaxPiecesPerPhase = 12800000;
 
-  static inline size_t g_max_epoch = 10;
+  static inline size_t g_max_epoch = 40;
  protected:
   friend class BaseTxn;
   friend class EpochCallback;

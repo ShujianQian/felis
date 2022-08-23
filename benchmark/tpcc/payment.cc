@@ -115,10 +115,10 @@ void PaymentTxn::UpdateWarehouse(const State &state, const TxnHandle &index_hand
   // Notify this node when warehouse_tax has a value. If
   // customer_node is the local node, then Signal() should simply
   // flip the boolean flag without transfer value over the network.
-  //int customer_node = TpccSliceRouter::SliceToNodeId(g_tpcc_config.WarehouseToSliceId(customer_warehouse_id));
-  //state->warehouse_tax_future.Subscribe(customer_node);
+  int customer_node = TpccSliceRouter::SliceToNodeId(g_tpcc_config.WarehouseToSliceId(customer_warehouse_id));
+  state->warehouse_tax_future.Subscribe(customer_node);
 
-  //state->warehouse_tax_future.Signal(w.w_tax);
+  state->warehouse_tax_future.Signal(w.w_tax);
 }
 
 void PaymentTxn::UpdateDistrict(const State &state, const TxnHandle &index_handle, int payment_amount)
@@ -133,8 +133,8 @@ void PaymentTxn::UpdateCustomer(const State &state, const TxnHandle &index_handl
 {
   TxnRow vhandle = index_handle(state->customer);
   auto c = vhandle.Read<Customer::Value>();
-  //auto tax = state->warehouse_tax_future.Wait();
-  auto tax = 0;
+  auto tax = state->warehouse_tax_future.Wait();
+  //auto tax = 0;
   auto amount = payment_amount + payment_amount * tax / 100;
 
   c.c_balance -= amount;
@@ -245,7 +245,7 @@ void PaymentTxn::Run()
                 }
               }
             },
-            aff, (((bitmap & 0x04) && (filter & 0x04)) && !((bitmap & 0x01) && (filter & 0x01))) ? 0:0 ); //1:0 in the ternary to enable
+            aff, (((bitmap & 0x04) && (filter & 0x04)) && !((bitmap & 0x01) && (filter & 0x01))) ? 1:0 ); //1:0 in the ternary to enable
             //we'll need to add a count for ourselves if the wait stays here but the signal doesn't
       }
     } else {
@@ -265,7 +265,7 @@ void PaymentTxn::Run()
             if (bitmap & 0x04) {
               UpdateCustomer(state, index_handle, payment_amount);
             }
-          }, std::numeric_limits<uint64_t>::max(), ((bitmap & 0x04) && !(bitmap & 0x01)) ? 0:0); //1:0 in the ternary to enable
+          }, std::numeric_limits<uint64_t>::max(), ((bitmap & 0x04) && !(bitmap & 0x01)) ? 1:0); //1:0 in the ternary to enable
           //this part is bound for another node, set the flags for if we're sending a wait
           //we'll add a count for the wait unless the signal is also going
     }

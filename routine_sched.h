@@ -83,8 +83,8 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
  public:
   static unsigned int Hash(uint64_t key) { return key >> 8; }
   static constexpr int kOutOfOrderWindow = 25;
-  static constexpr int keyThreshold = 5000;
-  static constexpr uint64_t max_backoff = 20;
+  static constexpr int keyThreshold = 17000;
+  static constexpr uint64_t max_backoff = 40;
 
   using PriorityQueueHashHeader = util::GenericListNode<PriorityQueueHashEntry>;
  private:
@@ -102,7 +102,7 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
     struct {
       // Min-heap
       WaitState states[kOutOfOrderWindow];
-      uint32_t off; // unused, remove
+      uint32_t unique_preempts; // statistics tracking
       uint32_t len;
     } waiting;
 
@@ -153,7 +153,7 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   void Add(int core_id, PieceRoutine **routines, size_t nr_routines) final override;
   void AddBubble() final override;
   bool Peek(int core_id, DispatchPeekListener &should_pop) final override;
-  bool Preempt(int core_id, BasePieceCollection::ExecutionRoutine *state, int preempt_factor) final override;
+  bool Preempt(int core_id, BasePieceCollection::ExecutionRoutine *state, uint64_t sid, uint64_t ver) final override;
   void Reset() final override;
   void Complete(int core_id) final override;
   int TraceDependency(uint64_t key) final override;

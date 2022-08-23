@@ -355,7 +355,8 @@ EpochExecutionDispatchService::EpochExecutionDispatchService()
     queue->pq.pending.start = 0;
     queue->pq.pending.end = 0;
 
-    queue->pq.waiting.off = queue->pq.waiting.len = 0;
+    queue->pq.waiting.unique_preempts = 0; 
+    queue->pq.waiting.len = 0;
 
     for (size_t t = 0; t < kHashTableSize; t++) {
       queue->pq.ht[t].Initialize();
@@ -574,6 +575,7 @@ retry:
   while (!tot_bubbles.compare_exchange_strong(nr_bubbles, 0));
 
   if (n + nr_bubbles > 0) {
+    logger->info("queue empty, {} unique preempts", q.waiting.unique_preempts);
     trace(TRACE_COMPLETION "DispatchService on core {} notifies {}+{} completions",
           core_id, n, nr_bubbles);
     comp->Complete(n + nr_bubbles);
@@ -586,7 +588,7 @@ void EpochExecutionDispatchService::AddBubble()
   tot_bubbles.fetch_add(1);
 }
 
-bool EpochExecutionDispatchService::Preempt(int core_id, BasePieceCollection::ExecutionRoutine *routine_state, int preempt_factor)
+bool EpochExecutionDispatchService::Preempt(int core_id, BasePieceCollection::ExecutionRoutine *routine_state, uint64_t sid, uint64_t ver)
 {
   auto &lock = queues[core_id]->lock;
   bool can_preempt = true;
@@ -611,11 +613,16 @@ bool EpochExecutionDispatchService::Preempt(int core_id, BasePieceCollection::Ex
   }else{
     // preempt factor doesn't always work (why?)
     // sometimes SimpleSync::WaitForData repeatedly runs from start instead of looping
-    ws.preempt_times = preempt_factor;
+    ws.preempt_times = 1;
+
+    //logger->info("preempt with SID: {}, VER: {}, sched_key: {}",sid,ver,state.current_sched_key);
+    q.waiting.unique_preempts++;
 
     // this should only be happening on first preemption. Otherwise, 2+ threads are touching the queue at a time
-    abort_if(preempt_factor > 1, "");
+    //abort_if(preempt_factor > 1, "");
   }
+  //if(sid == 0)
+    //logger->info("preempt with ver: {}. sched_key: {}, waits: {}",ver, state.current_sched_key, ws.preempt_times);
 
   ws.preempt_ts = state.ts;
   ws.sched_key = state.current_sched_key;
