@@ -57,6 +57,9 @@ add_executable(db
         gopp/gopp.cc
         gopp/channels.cc
         gopp/start-x86_64.S
+
+        coroutine.c
+        coro_switch.asm
         )
 
 target_include_directories(db PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -85,5 +88,10 @@ target_link_libraries(
         GTest::gtest_main
 )
 
+add_executable(coroutine_test test/coroutine_test.cc coroutine.c coro_switch.asm)
+target_link_libraries(coroutine_test GTest::gtest_main)
+target_include_directories(coroutine_test PUBLIC ${CMAKE_CURRENT_LIST_DIR}/)
+
 include(GoogleTest)
 gtest_discover_tests(sample_test)
+gtest_discover_tests(coroutine_test)
