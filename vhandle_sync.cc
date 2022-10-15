@@ -135,6 +135,7 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uin
       int dep = dispatch.TraceDependency(ver);
       printf("Deadlock on core %d? %lu (using %p) waiting for %lu (%d) node (%lu), ptr %p\n",
              core_id, sid, routine, ver, dep, ver & 0xFF, ptr);
+      logger->info("potential deadlock core: {}, SID: {}",core_id,sid);
       sleep(600);
     }
 
@@ -146,7 +147,7 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uin
 
     if ((wait_cnt & 0x00FF) == 0) {
       //preempt_times++;
-      if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt(sid, ver)) {
+      if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt(1, 1)) {
         // logger->info("Preempt back");
         // Broken???
         return true;
@@ -200,6 +201,7 @@ void SimpleSync::WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ve
       int dep = dispatch.TraceDependency(ver);
       printf("Deadlock on core %d? %lu (using %p) waiting for %lu (%d) node (%lu)\n",
              core_id, sid, routine, ver, dep, ver & 0xFF);
+      logger->info("potential deadlock core: {}, SID: {}",core_id,sid);
       sleep(600);
     }
 
@@ -209,7 +211,7 @@ void SimpleSync::WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ve
 
     if ((wait_cnt & 0x00FF) == 0) {
       //preempt_times++;
-      if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt(sid, ver)) {
+      if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt(1, 1)) {
         continue;
       }
     }

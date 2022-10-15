@@ -31,7 +31,8 @@ struct PieceRoutine {
   BasePieceCollection *next;
 
   uint8_t fv_signals;
-  uint8_t __padding__[15];
+  uint8_t remote_flag;
+  uint8_t __padding__[14];
 
   static PieceRoutine *CreateFromCapture(size_t capture_len);
   static PieceRoutine *CreateFromPacket(uint8_t *p, size_t packet_len);
@@ -132,6 +133,7 @@ class PromiseRoutineDispatchService {
   };
 
   virtual void Add(int core_id, PieceRoutine **r, size_t nr_routines) = 0;
+  virtual void ZqAdd(int core_id, PieceRoutine *r) = 0;
   virtual void AddBubble() = 0;
   virtual bool Preempt(int core_id, BasePieceCollection::ExecutionRoutine *state, uint64_t sid, uint64_t ver) = 0;
   virtual bool Peek(int core_id, DispatchPeekListener &should_pop) = 0;

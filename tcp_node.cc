@@ -281,7 +281,8 @@ size_t ReceiverChannel::PollRoutines(PieceRoutine **routines, size_t cnt)
   int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
   uint64_t header;
   size_t i = 0; //counter for pieces processed
-  size_t future_processed = 0; //count how many futures we processed
+  size_t routines_processed = 0; //count for how many routines we process
+  size_t futures_processed = 0; //count how many futures we processed
   while (i < cnt) { //only process so long as piece buffer has space
     if (in->Peek(&header, 8) < 8) //stop early if buffer empty
       break;
@@ -322,20 +323,36 @@ size_t ReceiverChannel::PollRoutines(PieceRoutine **routines, size_t cnt)
         break;
       }
       uint64_t epoch_nr;
-      int node_id;
       uint64_t offset;
+      int node_id;
+      int affinity;
       memcpy(&epoch_nr, buf+8, 8);
       memcpy(&offset, buf+16, 8);
       memcpy(&node_id, buf+24, 4);
-
+      memcpy(&affinity, buf+28, 4);
       // Get the pointer to the local future value object
       BaseFutureValue* localFuture = (BaseFutureValue *) util::Instance<EpochManager>().ptr(epoch_nr,node_id,offset);
 
-      ((FutureValue<int32_t> *)localFuture)->DecodeFrom(buf+28); //TODO, don't assume type, decode from should be a virtual function
-      localFuture->setReady(); //TODO: can we just use Signal() here?
-      in->Skip(buflen);
-      future_processed++;
+      ((FutureValue<int32_t> *)localFuture)->DecodeFrom(buf+32); //TODO, don't assume type, decode from should be a virtual function
+      localFuture->SignalRemote(affinity); //signal, pass the affinity since we need an extra trigger piece
 
+      //logger->info("recieved {}{}{} with affinity {} aka {}",epoch_nr, offset, node_id, affinity, (uint64_t) localFuture);
+
+      ///**
+      //zero queue signalling entry creation. 
+      auto signal_routine = PieceRoutine::CreateFromCapture(0);
+      signal_routine->remote_flag = 1; //simply having this non-zero indicates a fake signalling piece
+      signal_routine->affinity = affinity;
+      signal_routine->fv_signals = 1; //just to tell this is a remote piece
+
+      //capture_data is actually just the identifier for our FV object
+      signal_routine->sched_key = 0;
+      signal_routine->capture_data = (uint8_t *) localFuture; // this is a hack, we're just using the future value pointer as a unique identifier
+      routines[i++] = signal_routine;
+      //**/
+
+      futures_processed++;
+      in->Skip(buflen);
       //by counting futures alongside pieces, we consider them both tasks
       //because of this, we need to count every time we recieve a Future
       //TODO: modify to allow batching at end of loop
@@ -348,11 +365,13 @@ size_t ReceiverChannel::PollRoutines(PieceRoutine **routines, size_t cnt)
       if (in->Peek(buf, buflen) < buflen)
         break;
       routines[i++] = PieceRoutine::CreateFromPacket(buf + 8, header);
+      routines_processed++;
       in->Skip(buflen);
     }
   }
   // Counter for incoming futures is piggybacked alongside the counter for incoming pieces 
-  Complete(i + future_processed); 
+  Complete(routines_processed + futures_processed); 
+  //logger->info("recieved {} pieces and {} futures",i,future_processed);
   return i;
 }
 
@@ -514,7 +533,9 @@ void TcpNodeTransport::TransportFutureValue(BaseFutureValue *val)
   for (uint8_t i = 0; i < val->nr_subscribed_nodes(); i++) {
     auto node = val->subscribed_node(i);
     if (node == conf.node_id()) {
-      val->setReady();
+      val->Signal((int) val->subscribed_node_affinity(i));
+      //auto flush_v = ltp.TryFlushForCore((int) val->subscribed_node_affinity(i)); //we need to flush on other cores
+      //logger->info("zqLocal success: {}, target {}",flush_v, (int) val->subscribed_node_affinity(i));
       continue;
     }
 
@@ -522,8 +543,8 @@ void TcpNodeTransport::TransportFutureValue(BaseFutureValue *val)
     // Fill in the correct buffer_size
     size_t buffer_size = ((FutureValue<int32_t> *)val)->EncodeSize(); //TODO remove cast here as well
     buffer_size += 3 * sizeof(uint64_t); //header, epoch, offset
-    buffer_size += sizeof(int); //node id
-    //the buffer is 28 bytes, plus the size of the encoded future value, which for now is always 4 bytes, for 32 total
+    buffer_size += 2 * sizeof(int); //node id, affinity
+    //the buffer is 32 bytes, plus the size of the encoded future value, which for now is always 4 bytes, for 36 total
 
 
     uint8_t *buffer = (uint8_t *) out->Alloc(buffer_size);
@@ -536,8 +557,12 @@ void TcpNodeTransport::TransportFutureValue(BaseFutureValue *val)
     memcpy(buffer+8,&(epoch_info.epoch_nr),8);
     memcpy(buffer+16,&(epoch_info.offset),8);
     memcpy(buffer+24,&(epoch_info.node_id),4);
+    int temp = (int) val->subscribed_node_affinity(i);
+    memcpy(buffer+28, &temp, 4); // we also tack on the affinity at the destination
 
-    ((FutureValue<int32_t> *)val)->EncodeTo(buffer+28); //TODO remove cast
+    //logger->info("sent {}{}{} with aff {}",epoch_info.epoch_nr, epoch_info.offset, epoch_info.node_id, (int) val->subscribed_node_affinity(i), (uint64_t)val);
+
+    ((FutureValue<int32_t> *)val)->EncodeTo(buffer+32); //TODO remove cast
 
     out->Finish(buffer_size);
   }
@@ -593,15 +618,68 @@ bool TcpNodeTransport::PeriodicIO(int core)
     if (recv->current_status() == IncomingTraffic::Status::EndOfPhase) {
       continue;
     }
-
+    //logger->info("beginning poll on core {}",core);
     cont_io = true;
     PieceRoutine *routines[128];
     auto nr_recv = recv->Poll(routines, 128);
     if (nr_recv > 0) {
+      //logger->info("poll found result on core {}",core);
       // We do not need to flush, because we are adding pieces to ourself!
-      util::Impl<PromiseRoutineDispatchService>().Add(
-          core, routines, nr_recv);
+      //util::Impl<PromiseRoutineDispatchService>().Add(core, routines, nr_recv);
+      //logger->info("allocating space");
+      // per-core buffers
+
+      ///**
+      //logger->info("affinity route pre core: {}", core);
+      PieceRoutine *routine_buffer[16][128]; //TODO, allocate dynamically to number of threads without causing segfault
+      int buffer_size[16] = {0};
+
+      //logger->info("got space");
+      for(int j = 0; j < nr_recv; j++){
+        auto aff = routines[j]->affinity;
+        //logger->info("aff {}",aff);
+        if(aff < NodeConfiguration::g_nr_threads){ //add to affinity correct buffer if possible
+          routine_buffer[aff][buffer_size[aff]] = routines[j];
+          buffer_size[aff]++;
+        }else{ //else, put in ours
+          routine_buffer[core][buffer_size[core]] = routines[j];
+          buffer_size[core]++;
+        }
+      }
+
+      //logger->info("sending");
+      //send out on cores
+      for(int j = 0; j < NodeConfiguration::g_nr_threads; j++){
+        if(buffer_size[j]>0){ //only bother if we've got anything - enable once we're passing signals through here?
+          util::Impl<PromiseRoutineDispatchService>().Add(j, routine_buffer[j], buffer_size[j]);
+          buffer_size[j] = 0;
+          if(j == core) continue;
+          auto flush_v = ltp.TryFlushForCore(j); //we need to flush on other cores
+          if(!flush_v)
+            logger->info("flush failed, self:target {}:{}", core,j);
+        }else{
+          //logger->info("skipped, self:target {}:{}", core,j); //this will be spammed if passing signal routines
+        }
+      }
+      //logger->info("affinity route post core: {}", core);
+      //**/
+
+      
+      //bad way of directing with affinity, way too much locking, and no idea if this could risk a deadlock
+      /**
+      logger->info("affinity route pre core: {}", core);
+      for(int j = 0; j < nr_recv; j++){
+        if(routines[j]->affinity < NodeConfiguration::g_nr_threads){
+          util::Impl<PromiseRoutineDispatchService>().Add(routines[j]->affinity, routines + j, 1); //thanks auto pointer-arithmatic
+        }else{
+          util::Impl<PromiseRoutineDispatchService>().Add(core, routines + j, 1); //this never happens when pinning to warehouse
+        }
+      }
+      logger->info("affinity route post core: {}", core);
+      **/
+      
     }
+    //logger->info("ending poll on core {}",core);
   }
 
   // We constantly flush the issuing buffer as well. This is because the core

@@ -138,6 +138,10 @@ class FutureValue final : public BaseFutureValue {
     BaseFutureValue::Wait();
     return value;
   }
+  T &Wait(int send_node, int recieve_node) {
+    BaseFutureValue::Wait(send_node, recieve_node);
+    return value;
+  }
   size_t EncodeSize() override {
     return sql::Serializer<T>::EncodeSize(&value);
   }

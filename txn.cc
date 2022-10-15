@@ -245,18 +245,65 @@ VHandle *BaseTxn::BaseTxnIndexOpInsert(const BaseTxnIndexOpContext &ctx, int idx
   return result;
 }
 
-void BaseFutureValue::Signal()
+void BaseFutureValue::Signal(uint64_t aff)
 {
   ready = true;
+  return;
+  //TODO: handling for unknown affinity
+  if (aff >= std::numeric_limits<uint8_t>::max()) //we can't do signal pieces for unknown affinity
+    return;
+
+  //zero queue signalling entry creation. 
+  auto signal_routine = PieceRoutine::CreateFromCapture(0);
+  signal_routine->remote_flag = 1; //simply having this non-zero indicates a remote piece
+  signal_routine->affinity = aff;
+  //not actually using the sched_key, but the data structure is cache-line aligned, so don't want to waste space
+  //zero queue doesn't actually use sched key, its purely FIFO
+  //we can just use the pointer to our FV object to uniquely identify ourselves within an epoch
+  signal_routine->sched_key = (uint64_t) this; //sorry
+
+  //logger->info("local arrived {}", (uint64_t) this);
+  util::Impl<PromiseRoutineDispatchService>().ZqAdd(signal_routine->affinity, signal_routine);
+
+}
+
+void BaseFutureValue::SignalRemote(uint64_t aff)
+{
+  ready = true;
+  return;
+  //TODO: handling for unknown affinity
+  if (aff >= std::numeric_limits<uint8_t>::max()) //we can't do signal pieces for unknown affinity
+    return;
+
+  //zero queue signalling entry creation. 
+  auto signal_routine = PieceRoutine::CreateFromCapture(0);
+  signal_routine->remote_flag = 1; //simply having this non-zero indicates a remote piece
+  signal_routine->affinity = aff;
+  signal_routine->fv_signals = 1; //just to tell this is a remote piece
+  //not actually using the sched_key, but the data structure is cache-line aligned, so don't want to waste space
+  //zero queue doesn't actually use sched key, its purely FIFO
+  //we can just use the pointer to our FV object to uniquely identify ourselves within an epoch
+  signal_routine->capture_data = (uint8_t *) this; //sorry
+  signal_routine->sched_key = 0;
+
+  logger->info("remote arrived {}", (uint64_t) this);
+
+  util::Impl<PromiseRoutineDispatchService>().ZqAdd(signal_routine->affinity, signal_routine);
+
 }
 
 //TODO: Consider unifying spin code
-void BaseFutureValue::Wait()
+void BaseFutureValue::Wait(int send_node, int recieve_node)
 {
   long wait_cnt = 0;
   //int preempt_times = 0;
   int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
   auto &transport = util::Impl<PromiseRoutineTransportService>();
+  uint64_t typeSignal = 0;
+
+  if(send_node != recieve_node)
+    typeSignal = (uint64_t)this;
+
   
   while (!ready) {
     wait_cnt++;
@@ -267,12 +314,20 @@ void BaseFutureValue::Wait()
 
     //preempt_times++;
     auto routine = go::Scheduler::Current()->current_routine();
-    if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt(0,0)) {
+
+    // as with signal, the local pointer to this future value is unique in this epoch, and can be used to uniquely identify us
+    // sending ver as 0 works to identify us as a remote wait
+
+    // TODO: rename sid and ver in preempt to reflect actual use, make optional for other calls
+
+    if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt(typeSignal , 0) ) {
       continue;
     }
     
     _mm_pause();
   }
+  if(typeSignal)
+    logger->info("ready flag got {}", typeSignal);
   ready = false;
 }
 

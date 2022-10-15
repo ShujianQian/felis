@@ -357,6 +357,8 @@ EpochExecutionDispatchService::EpochExecutionDispatchService()
 
     queue->pq.waiting.unique_preempts = 0; 
     queue->pq.waiting.len = 0;
+    queue->pq.remote_waiting = {};
+    queue->pq.remote_waiting.max_load_factor(0.5);
 
     for (size_t t = 0; t < kHashTableSize; t++) {
       queue->pq.ht[t].Initialize();
@@ -390,6 +392,31 @@ void EpochExecutionDispatchService::Reset()
   tot_bubbles = 0;
 }
 
+//this is a modified version of Add specifically for sticking single routines onto select local cores
+void EpochExecutionDispatchService::ZqAdd(int core_id, PieceRoutine *routine){
+  auto &lock = queues[core_id]->lock;
+  lock.Lock();
+
+  auto &zq = queues[core_id]->zq;
+  size_t i = 0;
+
+  auto max_item_percore = g_max_item / NodeConfiguration::g_nr_threads;
+  size_t zdelta = 0,
+           zend = zq.end.load(std::memory_order_acquire),
+         zlimit = max_item_percore;
+
+  auto r = routine;
+  auto key = r->sched_key;
+
+  auto pos = zend + zdelta++;
+  abort_if(pos >= zlimit, "Preallocation of DispatchService is too small. {} < {}", pos, zlimit);
+  zq.q[pos] = r;
+
+  if (zdelta)
+    zq.end.fetch_add(zdelta, std::memory_order_release);
+
+  lock.Unlock();
+}
 
 void EpochExecutionDispatchService::Add(int core_id, PieceRoutine **routines,
                                         size_t nr_routines)
@@ -418,6 +445,9 @@ again:
     auto key = r->sched_key;
 
     if (key == 0) {
+      if(r->remote_flag){
+        logger->info("zq inserting {} onto core {}", (uint64_t) r->capture_data, core_id);
+      }
       auto pos = zend + zdelta++;
       abort_if(pos >= zlimit,
                "Preallocation of DispatchService is too small. {} < {}", pos, zlimit);
@@ -502,8 +532,45 @@ EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_po
 retry:
   zstart = zq.start.load(std::memory_order_acquire);
   if (zstart < zq.end.load(std::memory_order_acquire)) {
+    if(q.remote_waiting.size())
+      logger->info("zq has stuff on core {} with {} in remotewait",core_id,q.remote_waiting.size());
+    
     state.running = State::kRunning;
     auto r = zq.q[zstart];
+
+    //remote signal piece handling
+    //if we've got the flag, we need to go find its info
+    if(r->remote_flag){
+      uint64_t remote_key = (uint64_t) r->capture_data;
+      logger->info("handling remote {}",remote_key);
+      //uint64_t remote_key = (uint64_t) r->sched_key;
+      auto result = q.remote_waiting.find(remote_key);
+
+      //not found, pretend there was nothing in the zero queue
+      //we "ran" the fake piece, but our target either has not run (to the remote wait at least), or has already completed successfully
+      if(result == q.remote_waiting.end()){
+        //if(r->fv_signals)
+        logger->info("no find {}, core: {}, type: {}",remote_key, core_id, r->fv_signals);
+        zq.start.store(zstart + 1, std::memory_order_relaxed);
+        goto retry;
+      }else{ //we found something
+        
+        auto &rws = result->second; //get our waitstate
+        
+        if (should_pop(nullptr, rws.state)) { //do a should_pop on it
+          logger->info("found, popped {}, core: {}, type: {}",remote_key, core_id, r->fv_signals);
+          zq.start.store(zstart + 1, std::memory_order_relaxed); // found and acting on, so forget this piece
+          state.current_sched_key = rws.sched_key; //set the current sched key
+          q.remote_waiting.erase(result); //erase the element from the hash
+          return true;
+        }
+        logger->info("found, no pop {}, core: {}, type: {}",remote_key, core_id, r->fv_signals);
+        return false;
+      }
+    }
+
+    //we're not remote
+
     if (should_pop(r, nullptr)) {
       zq.start.store(zstart + 1, std::memory_order_relaxed);
       state.current_sched_key = r->sched_key;
@@ -511,12 +578,14 @@ retry:
     }
     return false;
   }
+  //logger->info("zq empty core {}",core_id);
 
   // Setting state.running without poking around the data structure is very
   // important for performance. This let other thread create the co-routines
   // without spinning for State::kDeciding for a long time.
   if (q.sched_pol->empty() && q.waiting.len == 0
-      && q.pending.end.load() == q.pending.start.load()) {
+      && q.pending.end.load() == q.pending.start.load()
+      && q.remote_waiting.empty()) {
     state.running = State::kSleeping;
   } else {
     state.running = State::kRunning;
@@ -557,6 +626,21 @@ retry:
     }
     return false;
   }
+
+//this is a hack and only sort-of works
+  if(q.remote_waiting.size()>0){
+    logger->info("down here with stuff to do");
+    auto toTry = q.remote_waiting.begin();
+    auto &rws = toTry->second; //get our waitstate
+        
+    if (should_pop(nullptr, rws.state)) { //do a should_pop on it
+      logger->info("forced run for {} on core {}",rws.sched_key, core_id);
+      state.current_sched_key = rws.sched_key; //set the current sched key
+      q.remote_waiting.erase(toTry); //erase the element from the hash
+      return true;
+    }
+    return false;
+  }
   /*
   logger->info("pending start {} end {}, zstart {} zend {}, running {}, completed {}",
                q.pending.start.load(), q.pending.end.load(),
@@ -575,7 +659,7 @@ retry:
   while (!tot_bubbles.compare_exchange_strong(nr_bubbles, 0));
 
   if (n + nr_bubbles > 0) {
-    logger->info("queue empty, {} unique preempts", q.waiting.unique_preempts);
+    logger->info("queue empty on core {}, {} unique preempts, {} remote waits", core_id, q.waiting.unique_preempts, q.remote_waiting.size());
     trace(TRACE_COMPLETION "DispatchService on core {} notifies {}+{} completions",
           core_id, n, nr_bubbles);
     comp->Complete(n + nr_bubbles);
@@ -602,6 +686,18 @@ bool EpochExecutionDispatchService::Preempt(int core_id, BasePieceCollection::Ex
   if (key == 0)
     return false; // sched_key == 0 and preempt isn't supported.
 
+  //remote wait
+  // TODO: handle unknown affinity pieces
+  if(ver == 0 && sid != 0){ // currently, ver is only 0 for remote waits. TODO: rename sid/ver, make everything but remote wait send 0
+    // data isn't here yet, so we'll go wait until woken
+    logger->info("inserting {} on core {} with {} entries", sid, core_id,q.remote_waiting.size());
+    auto& entry = q.remote_waiting[sid];
+    entry.state = routine_state;
+    entry.sched_key = state.current_sched_key;
+
+    return true;
+  }
+  
   abort_if(q.waiting.len == kOutOfOrderWindow, "out-of-order scheduling window is full");
 
   //auto &ws = q.waiting.states[(q.waiting.off + q.waiting.len) % kOutOfOrderWindow];
@@ -615,7 +711,7 @@ bool EpochExecutionDispatchService::Preempt(int core_id, BasePieceCollection::Ex
     // sometimes SimpleSync::WaitForData repeatedly runs from start instead of looping
     ws.preempt_times = 1;
 
-    //logger->info("preempt with SID: {}, VER: {}, sched_key: {}",sid,ver,state.current_sched_key);
+    //logger->info("preempt with SID: {}, VER: {}, sched_key: {} waitlength: {}",sid,ver,state.current_sched_key, q.waiting.len);
     q.waiting.unique_preempts++;
 
     // this should only be happening on first preemption. Otherwise, 2+ threads are touching the queue at a time
@@ -631,7 +727,8 @@ bool EpochExecutionDispatchService::Preempt(int core_id, BasePieceCollection::Ex
 
 
   // There is nothing to switch to!
-  if (q.waiting.len == 0 && q.sched_pol->ShouldPickWaiting(ws)){
+  if (q.waiting.len == 0 && q.remote_waiting.size() == 0 && q.sched_pol->ShouldPickWaiting(ws)){
+
     
     //if(core_id==0) logger->info("push fail on core {}, heap size {} with key {}, faux {}, factor {}", core_id,q.waiting.len, ws.sched_key,ws.preempt_key, std::min(ws.preempt_times, (uint64_t)5));
     return false;

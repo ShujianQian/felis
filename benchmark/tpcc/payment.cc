@@ -105,7 +105,7 @@ void PaymentTxn::Prepare()
 }
 
 void PaymentTxn::UpdateWarehouse(const State &state, const TxnHandle &index_handle,
-                                 int payment_amount, int customer_warehouse_id)
+                                 int payment_amount, int warehouse_id, int customer_warehouse_id)
 {
   TxnRow vhandle = index_handle(state->warehouse);
   auto w = vhandle.Read<Warehouse::Value>();
@@ -116,7 +116,8 @@ void PaymentTxn::UpdateWarehouse(const State &state, const TxnHandle &index_hand
   // customer_node is the local node, then Signal() should simply
   // flip the boolean flag without transfer value over the network.
   int customer_node = TpccSliceRouter::SliceToNodeId(g_tpcc_config.WarehouseToSliceId(customer_warehouse_id));
-  state->warehouse_tax_future.Subscribe(customer_node);
+  int customer_affinity = Config::WarehouseToCoreId(customer_warehouse_id);
+  state->warehouse_tax_future.Subscribe(customer_node, customer_affinity);
 
   state->warehouse_tax_future.Signal(w.w_tax);
 }
@@ -129,11 +130,13 @@ void PaymentTxn::UpdateDistrict(const State &state, const TxnHandle &index_handl
   vhandle.Write(d);
 }
 
-void PaymentTxn::UpdateCustomer(const State &state, const TxnHandle &index_handle, int payment_amount)
+void PaymentTxn::UpdateCustomer(const State &state, const TxnHandle &index_handle, int payment_amount, int warehouse_id, int customer_warehouse_id)
 {
   TxnRow vhandle = index_handle(state->customer);
   auto c = vhandle.Read<Customer::Value>();
-  auto tax = state->warehouse_tax_future.Wait();
+  int warehouse_node = TpccSliceRouter::SliceToNodeId(g_tpcc_config.WarehouseToSliceId(warehouse_id));
+  int customer_node = TpccSliceRouter::SliceToNodeId(g_tpcc_config.WarehouseToSliceId(customer_warehouse_id));
+  auto tax = state->warehouse_tax_future.Wait(warehouse_node, customer_node);
   //auto tax = 0;
   auto amount = payment_amount + payment_amount * tax / 100;
 
@@ -154,9 +157,9 @@ void PaymentTxn::Run()
       state->warehouse_future = UpdateForKey(
           node, state->warehouse,
           [](const auto &ctx, VHandle *row) {
-            auto &[state, index_handle, payment_amount, customer_warehouse_id] = ctx;
-            UpdateWarehouse(state, index_handle, payment_amount, customer_warehouse_id);
-          }, payment_amount, customer_warehouse_id);
+            auto &[state, index_handle, payment_amount, warehouse_id, customer_warehouse_id] = ctx;
+            UpdateWarehouse(state, index_handle, payment_amount, warehouse_id, customer_warehouse_id);
+          }, payment_amount, warehouse_id, customer_warehouse_id);
 
       state->district_future = UpdateForKey(
           node, state->district,
@@ -169,9 +172,9 @@ void PaymentTxn::Run()
       state->customer_future = UpdateForKey(
           node, state->customer,
           [](const auto &ctx, VHandle *row) {
-            auto &[state, index_handle, payment_amount] = ctx;
-            UpdateCustomer(state, index_handle, payment_amount);
-          }, payment_amount);
+            auto &[state, index_handle, payment_amount, warehouse_id, customer_warehouse_id] = ctx;
+            UpdateCustomer(state, index_handle, payment_amount, warehouse_id, customer_warehouse_id);
+          }, payment_amount, warehouse_id, customer_warehouse_id);
 
       if (!state->warehouse_future.has_callback()
           && !state->district_future.has_callback()
@@ -208,14 +211,14 @@ void PaymentTxn::Run()
         }
 
         root->AttachRoutine(
-            MakeContext(payment_amount, customer_warehouse_id, bitmap, filter), node,
+            MakeContext(payment_amount, warehouse_id, customer_warehouse_id, bitmap, filter), node,
             [](const auto &ctx) {
-              auto &[state, index_handle, payment_amount, customer_warehouse_id, bitmap, filter] = ctx;
+              auto &[state, index_handle, payment_amount, warehouse_id, customer_warehouse_id, bitmap, filter] = ctx;
 
               probes::TpccPayment{0, __builtin_popcount(bitmap), (int) state->warehouse->object_coreid()}();
 
               if ((bitmap & 0x01) && (filter & 0x01)) {
-                state->warehouse_future.Invoke(state, index_handle, payment_amount, customer_warehouse_id);
+                state->warehouse_future.Invoke(state, index_handle, payment_amount, warehouse_id, customer_warehouse_id);
 
                 if (Client::g_enable_pwv) {
                   util::Instance<PWVGraphManager>().local_graph()->ActivateResource(
@@ -236,7 +239,7 @@ void PaymentTxn::Run()
               }
 
               if ((bitmap & 0x04) && (filter & 0x04)) {
-                state->customer_future.Invoke(state, index_handle, payment_amount);
+                state->customer_future.Invoke(state, index_handle, payment_amount, warehouse_id, customer_warehouse_id);
 
                 if (Client::g_enable_pwv) {
                   util::Instance<PWVGraphManager>().local_graph()->ActivateResource(
@@ -249,13 +252,25 @@ void PaymentTxn::Run()
             //we'll need to add a count for ourselves if the wait stays here but the signal doesn't
       }
     } else {
+
+      //with pinned warehouses, we can use affinity
+      auto aff = std::numeric_limits<uint64_t>::max();
+      if (g_tpcc_config.IsWarehousePinnable()) {
+          if (bitmap & 0x01) {
+            aff = Config::WarehouseToCoreId(warehouse_id);
+          } else if (bitmap == 0x04) {
+            aff = Config::WarehouseToCoreId(customer_warehouse_id);
+          }
+        }
+      
+
       root->AttachRoutine(
-          MakeContext(bitmap, payment_amount, customer_warehouse_id), node,
+          MakeContext(bitmap, payment_amount, warehouse_id, customer_warehouse_id), node,
           [](const auto &ctx) {
-            auto &[state, index_handle, bitmap, payment_amount, customer_warehouse_id] = ctx;
+            auto &[state, index_handle, bitmap, payment_amount, warehouse_id, customer_warehouse_id] = ctx;
 
             if (bitmap & 0x01) {
-              UpdateWarehouse(state, index_handle, payment_amount, customer_warehouse_id);
+              UpdateWarehouse(state, index_handle, payment_amount, warehouse_id, customer_warehouse_id);
             }
 
             if (bitmap & 0x02) {
@@ -263,9 +278,9 @@ void PaymentTxn::Run()
             }
 
             if (bitmap & 0x04) {
-              UpdateCustomer(state, index_handle, payment_amount);
+              UpdateCustomer(state, index_handle, payment_amount, warehouse_id, customer_warehouse_id);
             }
-          }, std::numeric_limits<uint64_t>::max(), ((bitmap & 0x04) && !(bitmap & 0x01)) ? 1:0); //1:0 in the ternary to enable
+          }, aff, ((bitmap & 0x04) && !(bitmap & 0x01)) ? 1:0); //1:0 in the ternary to enable
           //this part is bound for another node, set the flags for if we're sending a wait
           //we'll add a count for the wait unless the signal is also going
     }

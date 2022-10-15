@@ -28,9 +28,9 @@ struct PaymentState {
 
   NodeBitmap nodes;
 
-  InvokeHandle<PaymentState, int, uint> warehouse_future;
+  InvokeHandle<PaymentState, int, uint, uint> warehouse_future;
   InvokeHandle<PaymentState, int> district_future;
-  InvokeHandle<PaymentState, int> customer_future;
+  InvokeHandle<PaymentState, int, uint, uint> customer_future;
   struct Completion : public TxnStateCompletion<PaymentState> {
     void operator()(int id, BaseTxn::LookupRowResult rows) {
       if (id == 0) {
@@ -60,11 +60,11 @@ class PaymentTxn : public Txn<PaymentState>, public PaymentStruct {
   void PrepareInsert() override final {}
 
   static void UpdateWarehouse(const State &state, const TxnHandle &index_handle,
-                              int payment_amount, int customer_warehouse_id);
+                              int payment_amount, int warehouse_id, int customer_warehouse_id);
   static void UpdateDistrict(const State &state, const TxnHandle &index_handle,
                              int payment_amount);
   static void UpdateCustomer(const State &state, const TxnHandle &index_handle,
-                             int payment_amount);
+                             int payment_amount, int warehouse_id, int customer_warehouse_id);
 };
 
 }

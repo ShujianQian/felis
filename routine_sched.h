@@ -21,6 +21,11 @@ struct WaitState {
   uint64_t preempt_times;
 };
 
+struct RemoteWaitState {
+  BasePieceCollection::ExecutionRoutine *state;
+  uint64_t sched_key;
+};
+
 // for use ordering WaitStates in a heap
 // as this performs a > b instead of a < b, this functions as a min-heap
 static bool Greater(const WaitState &a, const WaitState &b) {
@@ -106,6 +111,9 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
       uint32_t len;
     } waiting;
 
+    //remote wait hashmap
+    std::unordered_map<uint64_t, RemoteWaitState> remote_waiting;
+
     mem::Brk brk; // memory allocator for hashtables entries and queue values
   };
 
@@ -151,6 +159,7 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
 
  public:
   void Add(int core_id, PieceRoutine **routines, size_t nr_routines) final override;
+  void ZqAdd(int core_id, PieceRoutine *routine) final override;
   void AddBubble() final override;
   bool Peek(int core_id, DispatchPeekListener &should_pop) final override;
   bool Preempt(int core_id, BasePieceCollection::ExecutionRoutine *state, uint64_t sid, uint64_t ver) final override;

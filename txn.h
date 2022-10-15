@@ -188,6 +188,7 @@ class BaseFutureValue {
   std::atomic_bool ready = false;
   uint8_t nr_nodes = 0;
   uint8_t nodes[kMaxSubscription];
+  uint8_t nodeCore[kMaxSubscription];
  public:
   BaseFutureValue() {}
   BaseFutureValue(const BaseFutureValue &rhs) : ready(rhs.ready.load()) {}
@@ -197,17 +198,21 @@ class BaseFutureValue {
     __builtin_memcpy(nodes, rhs.nodes, nr_nodes);
     return *this;
   }
-  void Signal();
-  void Wait();
-  void Subscribe(uint8_t node) {
+  void Signal(uint64_t aff = std::numeric_limits<uint64_t>::max());
+  void SignalRemote(uint64_t aff = std::numeric_limits<uint64_t>::max());
+  void Wait(int send_node = -1, int recieve_node = -1);
+  void Subscribe(uint8_t node, uint8_t core) {
     abort_if(nr_nodes >= kMaxSubscription, "nr_nodes exceeds max subscription limit");
-    nodes[nr_nodes++] = node;
+    nodes[nr_nodes] = node;
+    nodeCore[nr_nodes] = core;
+    nr_nodes++;
   }
   virtual size_t EncodeSize() { return 0; }
   virtual void EncodeTo(uint8_t *buf) {}
   virtual void DecodeFrom(const uint8_t *buf) {}
   uint8_t nr_subscribed_nodes() const { return nr_nodes; }
   uint8_t subscribed_node(uint8_t idx) const { return nodes[idx]; }
+  uint8_t subscribed_node_affinity(uint8_t idx) const { return nodeCore[idx]; }
   void setReady() { ready = true; } //helper to set the ready flag
  protected:
   GenericEpochObject<BaseFutureValue> ConvertToEpochObject() { return EpochObject::Convert(this); }

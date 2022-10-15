@@ -29,6 +29,7 @@ PieceRoutine *PieceRoutine::CreateFromCapture(size_t capture_len)
   r->callback = nullptr;
   r->next = nullptr;
   r->fv_signals = 0;
+  r->remote_flag = 0;
   std::fill(r->__padding__, r->__padding__ + 8, 0);
   return r;
 }
