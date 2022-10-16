@@ -117,9 +117,14 @@ void LocalDispatcherImpl::FlushOnCore(int tid, unsigned int start, unsigned int 
       q->task_buffer[i].nr = 0;
 
     auto delta = dice.fetch_add((end - start) % nr_threads, std::memory_order_release);
+
+    auto &conf = util::Instance<NodeConfiguration>();
+    auto node_id = conf.node_id(); // starts from 1
+
     for (int j = start; j < end; j++) {
       auto r = q->routines[j];
       auto core = 0;
+
       if (r->affinity < nr_threads) {
         core = r->affinity;
       } else {

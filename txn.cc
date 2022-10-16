@@ -254,26 +254,26 @@ void BaseFutureValue::Signal()
 void BaseFutureValue::Wait()
 {
   long wait_cnt = 0;
-  int preempt_times = 0;
+  //int preempt_times = 0;
   int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
   auto &transport = util::Impl<PromiseRoutineTransportService>();
   
   while (!ready) {
     wait_cnt++;
 
-    if ((wait_cnt & 0x0FFFF) == 0) {
+    if ((wait_cnt & 0x3F) == 0) {
       transport.PeriodicIO(core_id);
     }
 
-    if ((wait_cnt & 0x00FFF) == 0) {
-      preempt_times++;
-      auto routine = go::Scheduler::Current()->current_routine();
-      if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt(preempt_times)) {
-        continue;
-      }
+    //preempt_times++;
+    auto routine = go::Scheduler::Current()->current_routine();
+    if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt(0,0)) {
+      continue;
     }
+    
     _mm_pause();
   }
+  ready = false;
 }
 
 }

@@ -124,7 +124,7 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uin
   auto &transport = util::Impl<PromiseRoutineTransportService>();
   auto &dispatch = util::Impl<PromiseRoutineDispatchService>();
   auto routine = sched->current_routine();
-  int preempt_times = 0;
+  //int preempt_times = 0;
   // routine->set_busy_poll(true);
 
   // abort_if(core_id < 0, "We should not run on thread pool 0!");
@@ -145,8 +145,8 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uin
     }
 
     if ((wait_cnt & 0x00FF) == 0) {
-      preempt_times++;
-      if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt(preempt_times)) {
+      //preempt_times++;
+      if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt(sid, ver)) {
         // logger->info("Preempt back");
         // Broken???
         return true;
@@ -192,7 +192,7 @@ void SimpleSync::WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ve
   auto &transport = util::Impl<PromiseRoutineTransportService>();
   auto &dispatch = util::Impl<PromiseRoutineDispatchService>();
   auto routine = sched->current_routine();
-  int preempt_times = 0;
+  //int preempt_times = 0;
 
   while (IsPendingVal(*addr)) {
     wait_cnt++;
@@ -208,8 +208,8 @@ void SimpleSync::WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ve
     }
 
     if ((wait_cnt & 0x00FF) == 0) {
-      preempt_times++;
-      if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt(preempt_times)) {
+      //preempt_times++;
+      if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt(sid, ver)) {
         continue;
       }
     }
