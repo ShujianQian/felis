@@ -445,9 +445,9 @@ again:
     auto key = r->sched_key;
 
     if (key == 0) {
-      if(r->remote_flag){
-        logger->info("zq inserting {} onto core {}", (uint64_t) r->capture_data, core_id);
-      }
+      //if(r->remote_flag){
+        //logger->info("zq inserting {} onto core {}", (uint64_t) r->capture_data, core_id);
+      //}
       auto pos = zend + zdelta++;
       abort_if(pos >= zlimit,
                "Preallocation of DispatchService is too small. {} < {}", pos, zlimit);
@@ -533,7 +533,7 @@ retry:
   zstart = zq.start.load(std::memory_order_acquire);
   if (zstart < zq.end.load(std::memory_order_acquire)) {
     if(q.remote_waiting.size())
-      logger->info("zq has stuff on core {} with {} in remotewait",core_id,q.remote_waiting.size());
+      //logger->info("zq has stuff on core {} with {} in remotewait",core_id,q.remote_waiting.size());
     
     state.running = State::kRunning;
     auto r = zq.q[zstart];
@@ -542,7 +542,7 @@ retry:
     //if we've got the flag, we need to go find its info
     if(r->remote_flag){
       uint64_t remote_key = (uint64_t) r->capture_data;
-      logger->info("handling remote {}",remote_key);
+      //logger->info("handling remote {}",remote_key);
       //uint64_t remote_key = (uint64_t) r->sched_key;
       auto result = q.remote_waiting.find(remote_key);
 
@@ -550,7 +550,7 @@ retry:
       //we "ran" the fake piece, but our target either has not run (to the remote wait at least), or has already completed successfully
       if(result == q.remote_waiting.end()){
         //if(r->fv_signals)
-        logger->info("no find {}, core: {}, type: {}",remote_key, core_id, r->fv_signals);
+        //logger->info("no find {}, core: {}, type: {}",remote_key, core_id, r->fv_signals);
         zq.start.store(zstart + 1, std::memory_order_relaxed);
         goto retry;
       }else{ //we found something
@@ -558,13 +558,13 @@ retry:
         auto &rws = result->second; //get our waitstate
         
         if (should_pop(nullptr, rws.state)) { //do a should_pop on it
-          logger->info("found, popped {}, core: {}, type: {}",remote_key, core_id, r->fv_signals);
+          //logger->info("found, popped {}, core: {}, type: {}",remote_key, core_id, r->fv_signals);
           zq.start.store(zstart + 1, std::memory_order_relaxed); // found and acting on, so forget this piece
           state.current_sched_key = rws.sched_key; //set the current sched key
           q.remote_waiting.erase(result); //erase the element from the hash
           return true;
         }
-        logger->info("found, no pop {}, core: {}, type: {}",remote_key, core_id, r->fv_signals);
+        //logger->info("found, no pop {}, core: {}, type: {}",remote_key, core_id, r->fv_signals);
         return false;
       }
     }
@@ -628,6 +628,7 @@ retry:
   }
 
 //this is a hack and only sort-of works
+  /**
   if(q.remote_waiting.size()>0){
     logger->info("down here with stuff to do");
     auto toTry = q.remote_waiting.begin();
@@ -641,6 +642,7 @@ retry:
     }
     return false;
   }
+  **/
   /*
   logger->info("pending start {} end {}, zstart {} zend {}, running {}, completed {}",
                q.pending.start.load(), q.pending.end.load(),
@@ -659,7 +661,7 @@ retry:
   while (!tot_bubbles.compare_exchange_strong(nr_bubbles, 0));
 
   if (n + nr_bubbles > 0) {
-    logger->info("queue empty on core {}, {} unique preempts, {} remote waits", core_id, q.waiting.unique_preempts, q.remote_waiting.size());
+    //logger->info("queue empty on core {}, {} unique preempts, {} remote waits", core_id, q.waiting.unique_preempts, q.remote_waiting.size());
     trace(TRACE_COMPLETION "DispatchService on core {} notifies {}+{} completions",
           core_id, n, nr_bubbles);
     comp->Complete(n + nr_bubbles);
@@ -690,7 +692,7 @@ bool EpochExecutionDispatchService::Preempt(int core_id, BasePieceCollection::Ex
   // TODO: handle unknown affinity pieces
   if(ver == 0 && sid != 0){ // currently, ver is only 0 for remote waits. TODO: rename sid/ver, make everything but remote wait send 0
     // data isn't here yet, so we'll go wait until woken
-    logger->info("inserting {} on core {} with {} entries", sid, core_id,q.remote_waiting.size());
+    //logger->info("inserting {} on core {} with {} entries", sid, core_id,q.remote_waiting.size());
     auto& entry = q.remote_waiting[sid];
     entry.state = routine_state;
     entry.sched_key = state.current_sched_key;

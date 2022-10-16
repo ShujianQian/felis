@@ -189,6 +189,7 @@ void BasePieceCollection::ExecutionRoutine::Run()
 
   PieceRoutine *next_r;
   bool give_up = false;
+  bool do_retry = true; // due to affinity routing, we want to do one last peek after periodicIO comes back false
   // BasePromise::ExecutionRoutine *next_state = nullptr;
   go::Scheduler *sched = scheduler();
 
@@ -214,7 +215,7 @@ void BasePieceCollection::ExecutionRoutine::Run()
 
 
   unsigned long cnt = 0x01F;
-
+  retry:
   do {
     while (svc.Peek(core_id, should_pop)) {
       // Periodic flush
@@ -231,6 +232,13 @@ void BasePieceCollection::ExecutionRoutine::Run()
       svc.Complete(core_id);
     }
   } while (!give_up && svc.IsReady(core_id) && transport.PeriodicIO(core_id));
+
+  //if we stopped specifically due to periodicIO returning false, do one additional pass
+  if(do_retry && !give_up && svc.IsReady(core_id) && !transport.PeriodicIO(core_id)){
+    //logger->info("double checking peek on core {}", core_id);
+    do_retry = false;
+    goto retry;
+  }
 
   trace(TRACE_EXEC_ROUTINE "Coroutine Exit on core {} give up {}", core_id, give_up);
 }

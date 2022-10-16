@@ -72,21 +72,40 @@ class LocalTransport : public PromiseRoutineTransportService {
 
 class IncomingTraffic {
  protected:
-  static constexpr int kTotalStates = 3;
+  static constexpr int kNumCores = 16; // TODO: actually get the correct number of cores
+  static constexpr int kTotalStates = 4;
   std::atomic_ulong state = kTotalStates - 1;
+  std::atomic_int endBarrier = kNumCores;
+  bool perCoreEnd[kNumCores];
   int src_node_id = 0;
  public:
   enum class Status {
-    PollMappingTable, PollRoutines, EndOfPhase,
+    PollMappingTable, PollRoutines, SyncForEnd, EndOfPhase,
   };
   void AdvanceStatus() {
     auto old_state = state.fetch_add(1);
     logger->info("{} {} Incoming traffic status changed {} -> {}",
                  (void *) this, src_node_id, old_state % kTotalStates, (old_state + 1) % kTotalStates);
   }
+  void SyncBarrier(int core_id) {
+    abort_if(core_id > kNumCores-1, "core out of bounds!");
+    if(!perCoreEnd[core_id]){ //we only let each core
+      perCoreEnd[core_id] = true;
+      auto old_val = endBarrier.fetch_sub(1);
+      if(old_val == 1){ //last core to sync advances us into the next state, indicating all cores have finished processing/routing data
+        endBarrier.fetch_add(kNumCores);
+        AdvanceStatus();
+      }
+    }
+  }
+  void ResetSelf(int core_id){ //reset a cores barrier flag. This should be done by each core after the state update
+    perCoreEnd[core_id] = false;
+  }
+
+
   Status current_status() const {
     static constexpr Status all_status[] = {
-      Status::PollMappingTable, Status::PollRoutines, Status::EndOfPhase,
+      Status::PollMappingTable, Status::PollRoutines, Status::SyncForEnd, Status::EndOfPhase,
     };
     return all_status[state.load() % kTotalStates];
   }

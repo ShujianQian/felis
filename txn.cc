@@ -326,8 +326,8 @@ void BaseFutureValue::Wait(int send_node, int recieve_node)
     
     _mm_pause();
   }
-  if(typeSignal)
-    logger->info("ready flag got {}", typeSignal);
+  //if(typeSignal)
+    //logger->info("ready flag got {}", typeSignal);
   ready = false;
 }
 

@@ -241,7 +241,7 @@ void ReceiverChannel::Complete(size_t n)
   if (left == 0) {
     logger->info("{} Complete() last n={}", (void *) this, n);
     AdvanceStatus();
-    abort_if(current_status() != Status::EndOfPhase, "Bogus current state! {}", (int) current_status());
+    abort_if(current_status() != Status::SyncForEnd, "Bogus current state! {}", (int) current_status());
   }
 }
 
@@ -265,6 +265,7 @@ size_t ReceiverChannel::Poll(PieceRoutine **routines, size_t cnt)
         nr = PollRoutines(routines, cnt);
         keep_polling = false;
         break;
+      case Status::SyncForEnd:
       case Status::EndOfPhase:
         break;
     }
@@ -616,6 +617,7 @@ bool TcpNodeTransport::PeriodicIO(int core)
   for (int i = 0; i < conf.nr_nodes() - 1; i++) {
     auto recv = incoming_connection.at(i);
     if (recv->current_status() == IncomingTraffic::Status::EndOfPhase) {
+      recv->ResetSelf(core);
       continue;
     }
     //logger->info("beginning poll on core {}",core);
@@ -653,10 +655,10 @@ bool TcpNodeTransport::PeriodicIO(int core)
         if(buffer_size[j]>0){ //only bother if we've got anything - enable once we're passing signals through here?
           util::Impl<PromiseRoutineDispatchService>().Add(j, routine_buffer[j], buffer_size[j]);
           buffer_size[j] = 0;
-          if(j == core) continue;
-          auto flush_v = ltp.TryFlushForCore(j); //we need to flush on other cores
-          if(!flush_v)
-            logger->info("flush failed, self:target {}:{}", core,j);
+          //if(j == core) continue;
+          //auto flush_v = ltp.TryFlushForCore(j); //we need to flush on other cores //actually we don't
+          //if(!flush_v)
+            //logger->info("flush failed, self:target {}:{}", core,j);
         }else{
           //logger->info("skipped, self:target {}:{}", core,j); //this will be spammed if passing signal routines
         }
@@ -679,6 +681,11 @@ bool TcpNodeTransport::PeriodicIO(int core)
       **/
       
     }
+    if(recv->current_status() == IncomingTraffic::Status::SyncForEnd){
+      recv->SyncBarrier(core);
+    }
+
+
     //logger->info("ending poll on core {}",core);
   }
 
