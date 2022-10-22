@@ -56,6 +56,7 @@ struct Options {
   static inline const auto kOutputDir = Option("OutputDir");
   static inline const auto kDataMigration = Option("DataMigrationMode", false);
   static inline const auto kMaxNodeLimit = Option("MaxNodeLimit");
+  static inline const auto kNoHugePage = Option("NoHugePage", false);
 
   static inline const auto kNrEpoch = Option("NrEpoch");
   static inline const auto kEpochSize = Option("EpochSize");

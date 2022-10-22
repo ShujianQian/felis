@@ -7,6 +7,7 @@
 
 #include <syscall.h>
 
+#include "opts.h"
 #include "util/arch.h"
 #include "os.h"
 
@@ -57,7 +58,8 @@ void *OSMemory::Alloc(size_t length, int numa_node, bool on_demand)
   int prot = PROT_READ | PROT_WRITE;
   length = AlignLength(length);
 
-  if (length >= 2 << 20) flags |= MAP_HUGETLB;
+  if (length >= 2 << 20 && !felis::Options::kNoHugePage)
+    flags |= MAP_HUGETLB;
 
   void *mem = mmap(nullptr, length, prot, flags, (int) mem_map_desc, 0);
   if (mem == MAP_FAILED)
