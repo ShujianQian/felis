@@ -249,47 +249,12 @@ void BaseFutureValue::Signal(uint64_t aff)
 {
   ready = true;
   return;
-  //TODO: handling for unknown affinity
-  if (aff >= std::numeric_limits<uint8_t>::max()) //we can't do signal pieces for unknown affinity
-    return;
-
-  //zero queue signalling entry creation. 
-  auto signal_routine = PieceRoutine::CreateFromCapture(0);
-  signal_routine->remote_flag = 1; //simply having this non-zero indicates a remote piece
-  signal_routine->affinity = aff;
-  //not actually using the sched_key, but the data structure is cache-line aligned, so don't want to waste space
-  //zero queue doesn't actually use sched key, its purely FIFO
-  //we can just use the pointer to our FV object to uniquely identify ourselves within an epoch
-  signal_routine->sched_key = (uint64_t) this; //sorry
-
-  //logger->info("local arrived {}", (uint64_t) this);
-  util::Impl<PromiseRoutineDispatchService>().ZqAdd(signal_routine->affinity, signal_routine);
-
 }
 
 void BaseFutureValue::SignalRemote(uint64_t aff)
 {
   ready = true;
   return;
-  //TODO: handling for unknown affinity
-  if (aff >= std::numeric_limits<uint8_t>::max()) //we can't do signal pieces for unknown affinity
-    return;
-
-  //zero queue signalling entry creation. 
-  auto signal_routine = PieceRoutine::CreateFromCapture(0);
-  signal_routine->remote_flag = 1; //simply having this non-zero indicates a remote piece
-  signal_routine->affinity = aff;
-  signal_routine->fv_signals = 1; //just to tell this is a remote piece
-  //not actually using the sched_key, but the data structure is cache-line aligned, so don't want to waste space
-  //zero queue doesn't actually use sched key, its purely FIFO
-  //we can just use the pointer to our FV object to uniquely identify ourselves within an epoch
-  signal_routine->capture_data = (uint8_t *) this; //sorry
-  signal_routine->sched_key = 0;
-
-  logger->info("remote arrived {}", (uint64_t) this);
-
-  util::Impl<PromiseRoutineDispatchService>().ZqAdd(signal_routine->affinity, signal_routine);
-
 }
 
 //TODO: Consider unifying spin code

@@ -133,7 +133,6 @@ class PromiseRoutineDispatchService {
   };
 
   virtual void Add(int core_id, PieceRoutine **r, size_t nr_routines) = 0;
-  virtual void ZqAdd(int core_id, PieceRoutine *r) = 0;
   virtual void AddBubble() = 0;
   virtual bool Preempt(int core_id, BasePieceCollection::ExecutionRoutine *state, uint64_t sid, uint64_t ver) = 0;
   virtual bool Peek(int core_id, DispatchPeekListener &should_pop) = 0;

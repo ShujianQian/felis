@@ -159,7 +159,6 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
 
  public:
   void Add(int core_id, PieceRoutine **routines, size_t nr_routines) final override;
-  void ZqAdd(int core_id, PieceRoutine *routine) final override;
   void AddBubble() final override;
   bool Peek(int core_id, DispatchPeekListener &should_pop) final override;
   bool Preempt(int core_id, BasePieceCollection::ExecutionRoutine *state, uint64_t sid, uint64_t ver) final override;

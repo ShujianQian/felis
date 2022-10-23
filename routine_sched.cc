@@ -392,32 +392,6 @@ void EpochExecutionDispatchService::Reset()
   tot_bubbles = 0;
 }
 
-//this is a modified version of Add specifically for sticking single routines onto select local cores
-void EpochExecutionDispatchService::ZqAdd(int core_id, PieceRoutine *routine){
-  auto &lock = queues[core_id]->lock;
-  lock.Lock();
-
-  auto &zq = queues[core_id]->zq;
-  size_t i = 0;
-
-  auto max_item_percore = g_max_item / NodeConfiguration::g_nr_threads;
-  size_t zdelta = 0,
-           zend = zq.end.load(std::memory_order_acquire),
-         zlimit = max_item_percore;
-
-  auto r = routine;
-  auto key = r->sched_key;
-
-  auto pos = zend + zdelta++;
-  abort_if(pos >= zlimit, "Preallocation of DispatchService is too small. {} < {}", pos, zlimit);
-  zq.q[pos] = r;
-
-  if (zdelta)
-    zq.end.fetch_add(zdelta, std::memory_order_release);
-
-  lock.Unlock();
-}
-
 void EpochExecutionDispatchService::Add(int core_id, PieceRoutine **routines,
                                         size_t nr_routines)
 {
@@ -532,9 +506,6 @@ EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_po
 retry:
   zstart = zq.start.load(std::memory_order_acquire);
   if (zstart < zq.end.load(std::memory_order_acquire)) {
-    if(q.remote_waiting.size())
-      //logger->info("zq has stuff on core {} with {} in remotewait",core_id,q.remote_waiting.size());
-    
     state.running = State::kRunning;
     auto r = zq.q[zstart];
 
