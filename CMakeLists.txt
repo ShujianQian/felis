@@ -95,3 +95,7 @@ target_include_directories(coroutine_test PUBLIC ${CMAKE_CURRENT_LIST_DIR}/)
 include(GoogleTest)
 gtest_discover_tests(sample_test)
 gtest_discover_tests(coroutine_test)
+
+add_executable(coroutine_benchmark benchmarks/coroutine_benchmark.c benchmarks/bst_benchmark.c coroutine.c coro_switch.asm)
+target_include_directories(coroutine_benchmark PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(coroutine_benchmark PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/spdlog/include)

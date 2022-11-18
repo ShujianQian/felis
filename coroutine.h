@@ -26,28 +26,26 @@ extern "C" {
 
 struct coroutine;
 
-struct coro_private_stack
-{
-    void *ptr;
-    size_t size;
-    size_t valid_size;
-    size_t max_cp_size;
-    size_t cp_to_save;
-    size_t cp_to_restore;
+struct coro_private_stack {
+	void *ptr;
+	size_t size;
+	size_t valid_size;
+	size_t max_cp_size;
+	size_t cp_to_save;
+	size_t cp_to_restore;
 };
 
-struct coro_shared_stack
-{
-    void *ptr;
-    void *real_ptr;
-    void *aligned_highptr;
-    void *aligned_ret_ptr;
-    size_t size;
-    size_t real_size;
-    size_t aligned_valid_size;
-    size_t aligned_limit;
-    struct coroutine *owner;
-    bool guard_page_enabled;
+struct coro_shared_stack {
+	void *ptr;
+	void *real_ptr;
+	void *aligned_highptr;
+	void *aligned_ret_ptr;
+	size_t size;
+	size_t real_size;
+	size_t aligned_valid_size;
+	size_t aligned_limit;
+	struct coroutine *owner;
+	bool guard_page_enabled;
 };
 
 /**
@@ -56,7 +54,8 @@ struct coro_shared_stack
  * \param size Minimum size of the shared stack.
  * \param enable_guard_page Whether to add a read only page protection.
  */
-struct coro_shared_stack *coro_create_shared_stack(size_t size, bool enable_guard_page);
+struct coro_shared_stack *coro_create_shared_stack(size_t size,
+						   bool enable_guard_page);
 
 /**
  * Destroy the shared sstack.
@@ -74,15 +73,15 @@ typedef void (*coro_func_t)(void);
 
 struct coroutine {
 #ifdef CORO_SAVE_FPUCW_MXCSR
-    void *reg[9];
+	void *reg[9];
 #else
-    void *reg[8];
+	void *reg[8];
 #endif
-    struct coroutine *main_co;
-    void *args;
-    bool is_finished;
-    coro_func_t fptr;
-    struct coro_shared_stack *shared_stack;
+	struct coroutine *main_co;
+	void *args;
+	bool is_finished;
+	coro_func_t fptr;
+	struct coro_shared_stack *shared_stack;
 };
 
 extern __thread struct coroutine *coro_glbl_tls_current_co;
@@ -96,13 +95,20 @@ extern __thread struct coroutine *coro_glbl_tls_main_co;
  */
 void coro_thread_init(coro_func_t exception_func);
 
-struct coroutine *coro_create(struct coroutine *main_co, struct coro_shared_stack *shared_stack, coro_func_t coro_func,
-                              void *args);
+struct coroutine *coro_create(struct coroutine *main_co,
+			      struct coro_shared_stack *shared_stack,
+			      coro_func_t coro_func, void *args);
+
+void coro_reuse_coroutine(struct coroutine *coro, struct coroutine *main_co,
+			  struct coro_shared_stack *shared_stack,
+			  coro_func_t coro_func, void *args);
 
 /**
  * Returns the pointer to the current non-main coroutine. The caller of the function must be a non-main coroutine.
  */
 #define coro_get_co() (coro_glbl_tls_current_co)
+
+#define coro_get_main_co() (coro_glbl_tls_main_co)
 
 /**
  * Equivalent to (coro_get_co()->args). The caller of this function must be a non-main coroutine.
@@ -123,10 +129,16 @@ void coro_yield_to(struct coroutine *to_co);
 /**
  *
  */
-#define coro_exit() do {                \
-    coro_get_co()->is_finished = true;  \
-    coro_yield();                       \
-} while(0);
+#define coro_exit()                                \
+	do {                                       \
+		coro_get_co()->is_finished = true; \
+		coro_yield();                      \
+	} while (0);
+
+#define coro_mark_finish()                         \
+	do {                                       \
+		coro_get_co()->is_finished = true; \
+	} while (0)
 
 /**
  *
