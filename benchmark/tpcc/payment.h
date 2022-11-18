@@ -24,7 +24,7 @@ struct PaymentState {
   VHandle *district;
   VHandle *customer;
 
-  //FutureValue<int32_t> warehouse_tax_future;
+  FutureValue<int32_t> warehouse_tax_future;
 
   NodeBitmap nodes;
 
@@ -35,7 +35,7 @@ struct PaymentState {
     void operator()(int id, BaseTxn::LookupRowResult rows) {
       if (id == 0) {
         state->warehouse = rows[0];
-        //state->warehouse_tax_future = FutureValue<int32_t>();
+        state->warehouse_tax_future = FutureValue<int32_t>();
       } else if (id == 1) {
         state->district = rows[0];
       } else if (id == 2) {
