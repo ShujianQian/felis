@@ -6,6 +6,10 @@
 
 namespace felis {
 
+/**
+ * Utility class that keeps track of a counter of completed jobs.
+ * @tparam T Callable that implements PreComplete function to be called each time before counter is decremented, and the callable it self is called when the completion counter reaches zero.
+ */
 template <typename T>
 class CompletionObject {
   std::atomic_long comp_count;

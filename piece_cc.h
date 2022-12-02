@@ -8,6 +8,17 @@ namespace felis {
 class PieceCollection : public BasePieceCollection {
  public:
   using BasePieceCollection::BasePieceCollection;
+  /**
+   *
+   * @tparam Func
+   * @tparam Closure
+   * @param capture
+   * @param placement The destination node that this piece should run on
+   * @param func
+   * @param affinity
+   * @param signals TODO: Shujian: is this ever used?
+   * @return
+   */
   template <typename Func, typename Closure>
   PieceRoutine *AttachRoutine(const Closure &capture, int placement, Func func,
                               uint64_t affinity = std::numeric_limits<uint64_t>::max(),

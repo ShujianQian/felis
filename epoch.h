@@ -35,6 +35,9 @@ using TxnMemberFunc = void (BaseTxn::*)();
 
 class EpochClientBaseWorker : public go::Routine {
  protected:
+  /**
+   * Thread id that this worker will run on.
+   */
   int t;
   int nr_threads;
   EpochClient *client;
@@ -189,8 +192,14 @@ class EpochClient {
   CompletionObject<EpochCallback &> completion;
 
   EpochTxnSet *all_txns;
+  /**
+   * Pointer to the current epochs TxnSet
+   */
   std::atomic<EpochTxnSet *> cur_txns;
   unsigned long total_nr_txn;
+  /**
+   * Pointers to per core counters.
+   */
   unsigned long *per_core_cnts[NodeConfiguration::kMaxNrThreads];
   LocalityManager cont_lmgr;
 

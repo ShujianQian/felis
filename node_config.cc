@@ -309,6 +309,8 @@ void NodeConfiguration::CollectBufferPlanImpl(PieceRoutine *routine, unsigned lo
 bool NodeConfiguration::FlushBufferPlan(unsigned long *per_core_cnts)
 {
   constexpr auto max_level = PromiseRoutineTransportService::kPromiseMaxLevels;
+  // adds this core's counter to this node's global counter
+  // and update current nodes completion_object's counter for all PieceRoutines whose dst node is current node
   for (int i = 0; i < max_level; i++) {
     for (int src = 0; src < nr_nodes(); src++) {
       for (int dst = 0; dst < nr_nodes(); dst++) {
@@ -327,12 +329,14 @@ bool NodeConfiguration::FlushBufferPlan(unsigned long *per_core_cnts)
     }
   }
 
+  // To ensure that only the last thread on this node sends counter flush to the network
   if (local_batch_completed.fetch_add(1) + 1 < g_nr_threads)
     return false;
 
   local_batch->node_id = (ulong) node_id();
   logger->info("Flushing buffer plan");
 
+  // Flush current node's global counter to network
   for (int id = 1; id <= nr_nodes(); id++) {
     if (id == node_id()) continue;
     auto out = outgoing[id];

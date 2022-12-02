@@ -27,11 +27,19 @@ class TcpNodeTransport : public PromiseRoutineTransportService {
   std::array<tcp::SendChannel *, kMaxNrNode> outgoing_channels;
   std::array<tcp::ReceiverChannel *, kMaxNrNode> incoming_connection;
 
+  /**
+   * To handle transport request of local Routines.
+   */
   LocalTransport ltp;
   std::atomic_int counters = 0;
  public:
   TcpNodeTransport();
 
+  /**
+   * Transport remote and local PieceRoutines. For remote PieceRoutines, encode and write the corresponding OutChannel.
+   * For local PieceRoutines, use LocalTransport.
+   * @param routine     The PieceRoutine to be transported.
+   */
   void TransportPromiseRoutine(PieceRoutine *routine) final override;
   void TransportFutureValue(BaseFutureValue *val) final override;
   void FinishCompletion(int level) final override;

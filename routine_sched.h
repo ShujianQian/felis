@@ -150,6 +150,12 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   void ProcessPending(PriorityQueue &q);
 
  public:
+  /**
+   * Add a number of PieceRoutines to the per core scheduler queue.
+   * @param core_id
+   * @param routines
+   * @param nr_routines
+   */
   void Add(int core_id, PieceRoutine **routines, size_t nr_routines) final override;
   void AddBubble() final override;
   bool Peek(int core_id, DispatchPeekListener &should_pop) final override;

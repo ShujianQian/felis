@@ -40,6 +40,10 @@ class TransportBatcher {
       std::fill(delta.begin(), delta.begin() + nr_nodes, 0);
     }
    public:
+    /**
+     * Increment the counter for corresponding destination node.
+     * @param dst
+     */
     void AddRoute(int dst) { delta[dst - 1]++; }
   };
  private:
@@ -65,7 +69,17 @@ class LocalTransport : public PromiseRoutineTransportService {
   ~LocalTransport();
   LocalTransport(const LocalTransport &rhs) = delete;
 
+  /**
+   * Transport a PieceRoutine locally. Used by TcpNodeTransport to transport local PieceRoutines.
+   * Add the PieceRoutine to the LocalDispatcher's queue and potentially flush and submit the PieceRoutines to the
+   * scheduler's queue.
+   * @param routine
+   */
   void TransportPromiseRoutine(PieceRoutine *routine) final override;
+  /**
+   * Flush the PieceRoutines from the LocalDispatcher's queues to the scheduler's queues and spawn ExecutionRoutines to
+   * execute those PieceRoutines (and poll from network).
+   */
   void Flush();
   bool TryFlushForCore(int core_id);
 };
@@ -133,10 +147,29 @@ class NodeConfiguration {
     return all_config[idx].value();
   }
 
+  /**
+   * Clears local and global batch counters.
+   */
   void ResetBufferPlan();
+  /**
+   * Given a PieceCollection, update the counter for each of the PieceRoutine in the PieceColleciton.
+   * @param root
+   * @param cnts
+   */
   void CollectBufferPlan(BasePieceCollection *root, unsigned long *cnts);
+  /**
+   * Flush the per-core counter after updating all PieceRoutines on this core
+   * @param per_core_cnts   This core's buffer plan counter.
+   * @return                Whether this core flushed counter to the network.
+   */
   bool FlushBufferPlan(unsigned long *per_core_cnts);
+  /**
+   * Broadcasts start phase message to all other nodes.
+   */
   void SendStartPhase();
+  /**
+   * Advances the state of each IncomingTraffic
+   */
   void ContinueInboundPhase();
   void CloseAndShutdown();
 
@@ -153,6 +186,13 @@ class NodeConfiguration {
 
   TransportBatcher &batcher() { return transport_batcher; }
 
+  /**
+   * Calculates the index of the counter a PieceRoutine corresponds to inside the counter array.
+   * @param level
+   * @param src_node
+   * @param dst_node
+   * @return
+   */
   size_t BatchBufferIndex(int level, int src_node, int dst_node);
   std::atomic_ulong &TotalBatchCounter(int idx) { return total_batch_counters[idx]; }
 
@@ -188,6 +228,14 @@ class NodeConfiguration {
   } *local_batch;
   std::atomic_ulong local_batch_completed;
  private:
+
+  /**
+   * Update the counter of PieceRoutines given a PieceRoutine to run.
+   * @param routine
+   * @param cnts
+   * @param level
+   * @param src_node
+   */
   void CollectBufferPlanImpl(PieceRoutine *routine, unsigned long *cnts, int level, int src);
 };
 
@@ -251,6 +299,10 @@ class LocalDispatcherImpl : public Flushable<LocalDispatcherImpl> {
 
  public:
   LocalDispatcherImpl(int idx);
+  /**
+   * Add a PieceRoutine to the local dispatcher's queue. Potentially flush the dispatcher to submit to the scheduler.
+   * @param routine
+   */
   void QueueRoutine(PieceRoutine *routine);
 
   std::tuple<uint, uint> GetFlushRange(int tid) {
@@ -263,7 +315,19 @@ class LocalDispatcherImpl : public Flushable<LocalDispatcherImpl> {
     queues[tid]->flusher_start = flush_start;
   }
 
+  /**
+   * Submit the PieceRoutines from the LocalDispatcher's Queues to the scheduler's queues (under
+   * EpochExecutionDispatchService)
+   * @param tid
+   * @param start
+   * @param end
+   * @return
+   */
   bool PushRelease(int tid, unsigned int start, unsigned int end);
+  /**
+   * If there's no ExecutionRoutine running to run the PieceRoutines in the local scheduler's queues, create one on that
+   * core.
+   */
   void DoFlush();
 
   bool TryLock(int i) {
@@ -274,7 +338,20 @@ class LocalDispatcherImpl : public Flushable<LocalDispatcherImpl> {
   }
 
  private:
+  /**
+   * Submit the PieceRoutines from the LocalDispatcher's queues to the scheduler's queues
+   * @param thread
+   * @param start
+   * @param end
+   */
   void FlushOnCore(int thread, unsigned int start, unsigned int end);
+  /**
+   * Submits a number of PieceRoutines and add them to the core's scheduling queue.
+   * @param routines
+   * @param start
+   * @param end
+   * @param thread
+   */
   void SubmitOnCore(PieceRoutine **routines, unsigned int start, unsigned int end, int thread);
 };
 

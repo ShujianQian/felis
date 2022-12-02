@@ -242,13 +242,17 @@ void CallTxnsWorker::Run()
 
   while (AllocStateTxnWorker::comp.load() != 0) _mm_pause();
 
+  // Collect buffer plans for all txns of this core
   for (auto i = 0; i < pq->nr; i++) {
     auto txn = pq->txns[i];
     txn->ResetRoot();
     std::invoke(mem_func, txn);
-    client->conf.CollectBufferPlan(txn->root_promise(), cnt);
+    client->conf.CollectBufferPlan(txn->root_promise(),  cnt);
   }
 
+  // Flush this core's buffer plan counters to the node's global buffer plan counters.
+  // Only the last node will successfully flush the node's global buffer plan counters to the network and sets
+  // node_finished to true.
   bool node_finished = client->conf.FlushBufferPlan(client->per_core_cnts[t]);
 
   // Try to assign a default partition scheme if nothing has been
