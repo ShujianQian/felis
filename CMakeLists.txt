@@ -60,6 +60,7 @@ add_executable(db
 
         coroutine.c
         coro_switch.asm
+        coro_sched.cpp
         )
 
 target_include_directories(db PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

@@ -8,6 +8,7 @@
 #include "util/arch.h"
 #include "opts.h"
 #include "mem.h"
+#include "coro_sched.h"
 
 using util::Instance;
 using util::Impl;
@@ -180,6 +181,9 @@ void BasePieceCollection::ExecutionRoutine::AddToReadyQueue(go::Scheduler::Queue
 
 void BasePieceCollection::ExecutionRoutine::Run()
 {
+  CoroSched::StartCoroExec();
+  return;
+
   auto &svc = util::Impl<PromiseRoutineDispatchService>();
   auto &transport = util::Impl<PromiseRoutineTransportService>();
 
@@ -236,6 +240,7 @@ void BasePieceCollection::ExecutionRoutine::Run()
 
 bool BasePieceCollection::ExecutionRoutine::Preempt(uint64_t sid, uint64_t ver)
 {
+  return false; // FIXME: Disable preemption from now
  
   auto &svc = util::Impl<PromiseRoutineDispatchService>();
   int core_id = scheduler()->thread_pool_id() - 1;

@@ -80,4 +80,13 @@ static void debug(std::string_view fmt, T... args)
 #define DBG_WORKLOAD // "\x7f" "Workload: "
 #define DBG_DISPATCH // "\x7f" "Dispatch: "
 
+#define DEBUG_CORO_SCHED
+//#undef DEBUG_CORO_SCHED
+
+#ifdef DEBUG_CORO_SCHED
+#define cs_trace(...) (logger->info(__VA_ARGS__))
+#else
+#define cs_trace(...) ((void) 0)
+#endif
+
 #endif /* LOG_H */
