@@ -55,7 +55,16 @@ struct coro_shared_stack {
  * \param enable_guard_page Whether to add a read only page protection.
  */
 struct coro_shared_stack *coro_create_shared_stack(size_t size,
-						   bool enable_guard_page);
+						   bool enable_guard_page, bool lock);
+
+/**
+ * Creates a new shared stack of size size_t and sets the coro_shared_stack struct with the newly created stack.
+ *
+ * @param stack
+ * @param size
+ * @param enable_guard_page
+ */
+void coro_allocate_shared_stack(struct coro_shared_stack *stack, size_t size, bool enable_guard_page, bool lock);
 
 /**
  * Destroy the shared sstack.

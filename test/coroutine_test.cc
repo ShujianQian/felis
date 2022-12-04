@@ -15,7 +15,7 @@ TEST(CoroutineSwitchTest, Test)
 
 TEST(CoroutineSharedStackCreateTest, Test)
 {
-    coro_shared_stack *p = coro_create_shared_stack(4096, true);
+    coro_shared_stack *p = coro_create_shared_stack(4096, true, true);
     EXPECT_NE(p, nullptr);
     EXPECT_EQ(p->size, 4096);
     EXPECT_EQ(p->real_size, 8192);
@@ -35,7 +35,7 @@ void coro_test_func()
 TEST(CoroutineSwitchYieldTest, Test)
 {
     coro_thread_init(nullptr);
-    coro_shared_stack *p = coro_create_shared_stack(4096, true);
+    coro_shared_stack *p = coro_create_shared_stack(4096, true, true);
     coroutine * co = coro_create(coro_get_co(), p, coro_test_func, nullptr);
     coro_resume(co);
     std::cerr << "bye!" << std::endl;
@@ -60,7 +60,7 @@ TEST(CoroutineMultipleSwitchTest, Test)
 {
     coro_thread_init(nullptr);
     intptr_t x = 0;
-    coro_shared_stack *p = coro_create_shared_stack(4096, true);
+    coro_shared_stack *p = coro_create_shared_stack(4096, true, true);
     coroutine * co = coro_create(coro_get_co(), p, coro_test_func2, (void *) &x);
     coro_resume(co);
     for (int i = 0; i < 100; i++)
@@ -84,8 +84,8 @@ void coro_test_func3()
 TEST(CoroutineSymmetricSwitchTest, Test)
 {
     coro_thread_init(nullptr);
-    coro_shared_stack *p1 = coro_create_shared_stack(4096, true);
-    coro_shared_stack *p2 = coro_create_shared_stack(4096, true);
+    coro_shared_stack *p1 = coro_create_shared_stack(4096, true, true);
+    coro_shared_stack *p2 = coro_create_shared_stack(4096, true, true);
     coroutine *co1, *co2;
     co1 = coro_create(coro_get_co(), p1, coro_test_func3, (void *) &co2);
     co2 = coro_create(coro_get_co(), p2, coro_test_func3, (void *) &co1);

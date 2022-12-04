@@ -80,78 +80,87 @@ void coro_reuse_coroutine(struct coroutine *coro, struct coroutine *main_co,
 }
 
 struct coro_shared_stack *coro_create_shared_stack(size_t size,
-						   bool enable_guard_page)
+						   bool enable_guard_page, bool lock)
 {
-	if (size == 0)
-		size = 1 << 22;
-	if (size < 4096)
-		size = 4096;
-	assert(size >= 4096);
-
-	size_t page_size = 0;
-	if (enable_guard_page) {
-		long signed_page_size = sysconf(_SC_PAGESIZE);
-		assert(signed_page_size > 0);
-		assert(((signed_page_size - 1) & signed_page_size) == 0);
-		page_size = (size_t)((unsigned long)signed_page_size);
-		assert(page_size == (unsigned long)page_size);
-		// check overflow
-		assert((page_size << 1) >> 1 == page_size);
-
-		if (size < page_size) {
-			size = page_size * 2;
-		} else {
-			size_t aligned_size;
-			if ((size & (page_size - 1)) != 0) {
-				// align sstack size to multiple of pagesize
-				aligned_size = (size & (~(page_size - 1)));
-				assert(aligned_size + page_size * 2 >
-				       aligned_size);
-				aligned_size += page_size * 2;
-				assert(aligned_size / page_size ==
-				       size / page_size + 2);
-			} else {
-				aligned_size = size;
-				assert(aligned_size + page_size > aligned_size);
-				aligned_size += page_size; // protection page
-				assert(aligned_size / page_size ==
-				       size / page_size + 1);
-			}
-			size = aligned_size;
-			assert(size / page_size > 1);
-			assert((size & (page_size - 1)) == 0);
-		}
-	}
-
 	struct coro_shared_stack *sstack = (struct coro_shared_stack *)malloc(
 		sizeof(struct coro_shared_stack));
 	memset(sstack, 0, sizeof(*sstack));
 
-	if (enable_guard_page) {
-		sstack->guard_page_enabled = true;
-		sstack->real_ptr = mmap(NULL, size, PROT_READ | PROT_WRITE,
-					MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-		sstack->real_size = size;
-		sstack->ptr =
-			(void *)(((uintptr_t)sstack->real_ptr) + page_size);
-		sstack->size = size - page_size;
-	} else {
-		sstack->size = size;
-		sstack->ptr = malloc(size);
-	}
-
-	sstack->owner = NULL;
-	uintptr_t aligned_ptr = (uintptr_t)(sstack->size - sizeof(void *) * 2 +
-					    (uintptr_t)sstack->ptr);
-	aligned_ptr = (aligned_ptr >> 4) << 4; // aligned to 16 bytes
-	sstack->aligned_highptr = (void *)aligned_ptr;
-	sstack->aligned_ret_ptr = (void *)(aligned_ptr - sizeof(void *));
-	*((void **)(sstack->aligned_ret_ptr)) =
-		(void *)(coro_default_exception_func);
-	sstack->aligned_limit =
-		sstack->size - sizeof(void *) * 2 - 16; // max cost of alignment
+    coro_allocate_shared_stack(sstack, size, enable_guard_page, lock);
 
 	return sstack;
+}
+
+void coro_allocate_shared_stack(struct coro_shared_stack *stack, size_t size, bool enable_guard_page, bool lock)
+{
+  if (size == 0)
+    size = 1 << 22;
+  if (size < 4096)
+    size = 4096;
+  assert(size >= 4096);
+
+  size_t page_size = 0;
+  if (enable_guard_page) {
+    long signed_page_size = sysconf(_SC_PAGESIZE);
+    assert(signed_page_size > 0);
+    assert(((signed_page_size - 1) & signed_page_size) == 0);
+    page_size = (size_t)((unsigned long)signed_page_size);
+    assert(page_size == (unsigned long)page_size);
+    // check overflow
+    assert((page_size << 1) >> 1 == page_size);
+
+    if (size < page_size) {
+      size = page_size * 2;
+    } else {
+      size_t aligned_size;
+      if ((size & (page_size - 1)) != 0) {
+        // align sstack size to multiple of pagesize
+        aligned_size = (size & (~(page_size - 1)));
+        assert(aligned_size + page_size * 2 >
+            aligned_size);
+        aligned_size += page_size * 2;
+        assert(aligned_size / page_size ==
+            size / page_size + 2);
+      } else {
+        aligned_size = size;
+        assert(aligned_size + page_size > aligned_size);
+        aligned_size += page_size; // protection page
+        assert(aligned_size / page_size ==
+            size / page_size + 1);
+      }
+      size = aligned_size;
+      assert(size / page_size > 1);
+      assert((size & (page_size - 1)) == 0);
+    }
+  }
+
+  if (enable_guard_page) {
+    stack->guard_page_enabled = true;
+    stack->real_ptr = mmap(NULL, size, PROT_READ | PROT_WRITE,
+                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    // create a read-only guard page at the end
+    assert(mprotect(stack->real_ptr, page_size, PROT_READ) == 0);
+    stack->real_size = size;
+    stack->ptr =
+        (void *)(((uintptr_t)stack->real_ptr) + page_size);
+    stack->size = size - page_size;
+    assert(mlock(stack->real_ptr, stack->real_size) == 0);
+  } else {
+    stack->size = size;
+    stack->ptr = malloc(size);
+    assert(mlock(stack->real_ptr, stack->real_size) == 0);
+  }
+
+  stack->owner = NULL;
+  uintptr_t aligned_ptr = (uintptr_t)(stack->size - sizeof(void *) * 2 +
+      (uintptr_t)stack->ptr);
+  aligned_ptr = (aligned_ptr >> 4) << 4; // aligned to 16 bytes
+  stack->aligned_highptr = (void *)aligned_ptr;
+  stack->aligned_ret_ptr = (void *)(aligned_ptr - sizeof(void *));
+  *((void **)(stack->aligned_ret_ptr)) =
+      (void *)(coro_default_exception_func);
+  stack->aligned_limit =
+      stack->size - sizeof(void *) * 2 - 16; // max cost of alignment
 }
 
 void coro_destroy_shared_stack(struct coro_shared_stack *sstack)

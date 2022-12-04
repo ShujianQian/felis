@@ -89,7 +89,7 @@ void coroutine_bst_init()
 	coro_thread_init(NULL);
 	for (int i = 0; i < K_NUM_COROUTINE; i++) {
 		coroutines[i].is_finished = true;
-		stacks[i] = coro_create_shared_stack(4096, true);
+		stacks[i] = coro_create_shared_stack(4096, true, true);
 		coroutine_bst_args[i].bst = bst;
 		coroutine_bst_args[i].logged = true;
 	}
