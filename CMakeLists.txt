@@ -42,6 +42,8 @@ add_executable(db
         benchmark/ycsb/ycsb.cc
         benchmark/ycsb/ycsb_workload.cc
         #benchmark/ycsb/ycsb_priority.cc
+        benchmark/ycsb_dist/ycsb_dist.cc
+        benchmark/ycsb_dist/ycsb_dist_workload.cc
 
         benchmark/tpcc/tpcc.cc
         benchmark/tpcc/tpcc_workload.cc
