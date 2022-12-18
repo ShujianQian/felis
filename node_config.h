@@ -120,6 +120,9 @@ class NodeConfiguration {
   template <typename T> friend struct util::InstanceInit;
   int id;
  public:
+  /**
+   * How many threads are available on a machine.
+   */
   static size_t g_nr_threads;
   static constexpr size_t kMaxNrThreads = 32;
   static bool g_data_migration;

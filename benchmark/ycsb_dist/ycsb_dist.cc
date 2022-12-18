@@ -11,10 +11,6 @@ using namespace felis;
 static constexpr int kTotal = 10;
 static constexpr int kNrMSBContentionKey = 6;
 
-class YCSBDistSlicerRouter {
- public:
-  static int SliceToNodeId(int16_t slice_id) { return 1; } // TODO: map to nodes
-};
 
 
 // static uint64_t *g_permutation_map;
@@ -188,8 +184,7 @@ void DistRMWTxn::Run()
   }
 }
 
-void YcsbDistLoader::Run()
-{
+void YcsbDistLoader::Run() {
   auto &mgr = util::Instance<felis::TableManager>();
   mgr.Create<YcsbDist>();
 
@@ -205,17 +200,22 @@ void YcsbDistLoader::Run()
     info.set_affinity(t);
     info.Pin();
 
-    unsigned long start = t * Client::g_table_size / nr_threads;
-    unsigned long end = (t + 1) * Client::g_table_size / nr_threads;
+//    unsigned long start = t * Client::g_table_size / nr_threads;
+//    unsigned long end = (t + 1) * Client::g_table_size / nr_threads;
 
-    for (unsigned long i = start; i < end; i++) {
+    for (unsigned long i = 0; i < Client::g_table_size; i++) {
       YcsbDist::Key dbk;
-      YcsbDist::Value dbv;
       dbk.k = i;
-      dbv.v.resize_junk(999);
-      auto handle = mgr.Get<ycsb_dist::YcsbDist>().SearchOrCreate(dbk.EncodeView(buf));
-      // TODO: slice mapping table stuff?
-      felis::InitVersion(handle, dbv.Encode());
+      DoOnSlice(
+          dbk,
+          t,
+          [&](auto slice_id, auto core_id) {
+            YcsbDist::Value dbv;
+            dbv.v.resize_junk(999);
+
+            auto handle = mgr.Get<ycsb_dist::YcsbDist>().SearchOrCreate(dbk.EncodeView(buf));
+            felis::InitVersion(handle, dbv.Encode());
+          });
     }
   }
   util::Cpu info;
@@ -241,7 +241,7 @@ void YcsbDistLoader::Run()
 #endif
 }
 
-size_t Client::g_table_size = 10000000;
+size_t Client::g_table_size = 1 << 24;
 double Client::g_theta = 0.00;
 int Client::g_extra_read = 0;
 int Client::g_contention_key = 0;

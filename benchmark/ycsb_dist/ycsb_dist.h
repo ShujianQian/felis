@@ -22,7 +22,7 @@ struct YcsbDist {
   }
 
   static constexpr auto kTable = TableType::Ycsb;
-  static constexpr auto kIndexArgs = std::make_tuple(HashKey, 10000000, false);
+  static constexpr auto kIndexArgs = std::make_tuple(HashKey, 1 << 24, false);
 
   using IndexBackend = felis::HashtableIndex;
   using Key = sql::YcsbKey;
@@ -55,12 +55,42 @@ class Client : public felis::EpochClient {
   friend class DistRMWTxn;
 };
 
+class YCSBDistSlicerRouter {
+public:
+  static int SliceToNodeId(int16_t slice_id) {
+    uint64_t u_slice_id = (uint16_t) slice_id;
+    const uint64_t max_slice_id = 1 << 15;
+    uint64_t nr_nodes = util::Instance<felis::NodeConfiguration>().nr_nodes();
+    uint64_t slice_per_node = max_slice_id / nr_nodes;
+    return (int) (u_slice_id / slice_per_node) + 1;
+  }
+  static int SliceToCoreId(int16_t slice_id) {
+    uint64_t u_slice_id = (uint16_t) slice_id;
+    const uint64_t max_slice_id = 1 << 15;
+    uint64_t nr_nodes = util::Instance<felis::NodeConfiguration>().nr_nodes();
+    uint64_t nr_threads_per_node = util::Instance<felis::NodeConfiguration>().g_nr_threads;
+    uint64_t nr_threads = nr_nodes * nr_threads_per_node;
+    uint64_t slice_per_thread = max_slice_id / nr_threads;
+    return (int) (u_slice_id / slice_per_thread);
+  }
+};
+
 class YcsbDistLoader : public go::Routine {
   std::atomic_bool done = false;
+  int node_id;
  public:
-  YcsbDistLoader() {}
+  YcsbDistLoader() : node_id{util::Instance<felis::NodeConfiguration>().node_id()} { }
   void Run() override final;
   void Wait() { while (!done) sleep(1); }
+  template <typename FuncT>
+  inline void DoOnSlice(YcsbDist::Key &key, int core_id, FuncT func) {
+    auto slice_id = util::Instance<felis::SliceLocator<YcsbDist>>().Locate(key);
+//    auto core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+    if (YCSBDistSlicerRouter::SliceToNodeId(slice_id) == node_id
+        && YCSBDistSlicerRouter::SliceToCoreId(slice_id) == core_id) {
+      func(slice_id, core_id);
+    }
+  }
 };
 
 }
@@ -69,7 +99,16 @@ namespace felis {
 
 using namespace ycsb_dist;
 
-SHARD_TABLE(YcsbDist) { return 0; }
+/**
+ * Maps a YCSB key to a slice. Which is then used by the YCSBDistSliceRouter to map onto a node.
+ * @param key
+ * @return
+ */
+SHARD_TABLE(YcsbDist) {
+  auto &key_val = key.k;
+  // use the most significant 15 bits as the slice id
+  return (int16_t) (key_val >> 9);
+}
 
 }
 
