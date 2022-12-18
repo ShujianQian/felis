@@ -50,6 +50,9 @@ class Client : public felis::EpochClient {
   felis::BaseTxn *CreateTxn(uint64_t serial_id) final override;
 
   template <typename T> T GenerateTransactionInput();
+
+  friend class LocalRMWTxn;
+  friend class DistRMWTxn;
 };
 
 class YcsbDistLoader : public go::Routine {

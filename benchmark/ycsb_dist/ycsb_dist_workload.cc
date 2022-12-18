@@ -8,7 +8,7 @@ class YcsbDistModule : public Module<WorkloadModule> {
  public:
   YcsbDistModule() {
     info = {
-      .name = "ycsb distributed",
+      .name = "ycsb_dist",
       .description = "YCSB Distributed",
     };
   }
