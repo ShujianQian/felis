@@ -137,6 +137,8 @@ class BaseTxn {
     uint16_t keys_bitmap;
     uint16_t slices_bitmap;
     uint16_t rels_bitmap;
+    uint16_t node_id;
+    uint16_t src_node_id;
 
     uint16_t key_len[kMaxPackedKeys];
     const uint8_t *key_data[kMaxPackedKeys];
@@ -158,7 +160,7 @@ class BaseTxn {
     // We also need to send three bitmaps.
     static constexpr size_t kHeaderSize =
         sizeof(BaseTxnHandle) + sizeof(EpochObject)
-        + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint16_t);
+        + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint16_t) * 2;
 
     BaseTxnIndexOpContext(BaseTxnHandle handle, EpochObject state,
                       uint16_t keys_bitmap, VarStr **keys,

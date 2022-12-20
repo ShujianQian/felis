@@ -377,6 +377,8 @@ class Txn : public BaseTxn {
       auto [node, bitmap] = p;
       auto op_ctx = TxnIndexOpContextEx<OnCompleteParam>(
           index_handle(), state, bitmap, params...);
+      op_ctx.node_id = node;
+      op_ctx.src_node_id = current_node;
 
       if constexpr(!std::is_void<OnCompleteParam>()) {
         op_ctx.set_extra(*pp);

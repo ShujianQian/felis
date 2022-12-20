@@ -57,14 +57,14 @@ RMWStruct Client::GenerateTransactionInput<RMWStruct>()
 
   for (int i = 0; i < kTotal; i++) {
  again:
-    // s.write_keys[i] = g_permutation_map[rand.next() % g_table_size];
+//     s.write_keys[i] = g_permutation_map[rand.next() % g_table_size];
     s.write_keys[i] = rand.next() % g_table_size;
-    if (i < g_contention_key) {
-      s.write_keys[i] &= ~mask;
-    } else {
-      if ((s.write_keys[i] & mask) == 0)
-        goto again;
-    }
+//    if (i < g_contention_key) {
+//      s.write_keys[i] &= ~mask;
+//    } else {
+//      if ((s.write_keys[i] & mask) == 0)
+//        goto again;
+//    }
     for (int j = 0; j < i; j++)
       if (s.write_keys[i] == s.write_keys[j])
         goto again;
@@ -117,14 +117,68 @@ DistRMWTxn::DistRMWTxn(Client *client, uint64_t serial_id)
 void DistRMWTxn::Prepare()
 {
   YcsbDist::Key dbk[kTotal];
+  auto current_node = util::Instance<NodeConfiguration>().node_id();
   for (int i = 0; i < kTotal; i++) dbk[i].k = write_keys[i];
   INIT_ROUTINE_BRK(8192);
 
+////  txn_indexop_affinity = Ycsb
+//  auto &locator = util::Instance<SliceLocator<YcsbDist>>();
+//  state->nodes = GenerateNodeBitmap<YCSBDistSlicerRouter>(KeyParam<YcsbDist>(dbk, kTotal));
+//  int num_version_appended = 0;
+//  for (auto &p : state->nodes) {
+//    auto [node, bitmap] = p;
+//    auto op_ctx = TxnIndexOpContextEx<void>(index_handle(), state, bitmap, KeyParam<YcsbDist>(dbk, kTotal));
+////    auto op_ctx = TxnIndexOpContext();
+////    op_ctx.handle = index_handle();
+////    op_ctx.state = state;
+////    op_ctx.keys_bitmap = op_ctx.slices_bitmap = op_ctx.rels_bitmap = bitmap;
+////    op_ctx.node_id = node;
+////    op_ctx.src_node_id = current_node;
+//    if (node != current_node) {
+//      for (int i = 0; i < kTotal; i++) {
+//        const uint16_t mask = 1 << i;
+//        if (bitmap & mask) {
+//          num_version_appended++;
+//          auto aff = YCSBDistSlicerRouter::SliceToCoreId(locator.Locate(dbk[i]));
+//          root->AttachRoutine(
+//              op_ctx, node,
+//              [](auto &ctx) {
+//                auto completion = DistRMWState::LookupCompletion();
+//                completion.handle = ctx.handle;
+//                completion.state = GenericEpochObject<DistRMWState>(ctx.state);
+//                auto op = TxnIndexLookupOpImpl(ctx, 0); //FIXME: hard coded
+//                completion(0, op.result);
+//              }, aff);
+//        }
+//      }
+//    } else {
+//      for (int i = 0; i < kTotal; i++) {
+//        const uint16_t mask = 1 << i;
+//        if (bitmap & mask) {
+//          num_version_appended++;
+//          auto completion = DistRMWState::LookupCompletion();
+//          completion.handle = TxnHandle(op_ctx.handle);
+//          completion.state = GenericEpochObject<DistRMWState>(op_ctx.state);
+//          auto op = TxnIndexLookupOpImpl(op_ctx, 0); //FIXME: hard coded
+//          completion(0, op.result);
+//        }
+//      }
+//    }
+//  }
+//
+//  assert(num_version_appended == 1);
+
+//  txn_indexop_affinity = YCSBDistSlicerRouter::SliceToCoreId(locator.Locate(dbk[0]));
   state->nodes =
       TxnIndexLookup<YCSBDistSlicerRouter, DistRMWState::LookupCompletion, void>(
         nullptr,
         KeyParam<YcsbDist>(dbk, kTotal));
+
 }
+
+//namespace ycsb_dist {
+//__thread uint64_t ycsb_dist_waiting_key;
+//}
 
 void DistRMWTxn::WriteRow(TxnRow vhandle)
 {
@@ -145,7 +199,7 @@ void DistRMWTxn::Run()
   for (auto &p: state->nodes) {
     auto [node, bitmap] = p;
 
-    if (conf.node_id() == node) {
+//    if (conf.node_id() == node) {
 
 //      for (int i = 0; i < kTotal - Client::g_extra_read - 1; i++) {
 //        state->futures[i] = UpdateForKey(
@@ -161,26 +215,33 @@ void DistRMWTxn::Run()
 //
 //      }
 
-      auto aff = std::numeric_limits<uint64_t>::max();
+//      auto aff = std::numeric_limits<uint64_t>::max();
+    YcsbDist::Key dbk;
+    auto &locator = util::Instance<SliceLocator<YcsbDist>>();
       // auto aff = AffinityFromRows(bitmap, state->rows);
       //
 //      auto aff = reader_nodes[];
-      int node = 1;
+//      int node = 1;
       for (int i = 0; i < kTotal; i++) {
-        root->AttachRoutine(
-            MakeContext(i), node,
-            [](const auto &ctx) {
-              auto &[state, index_handle, i] = ctx;
-              WriteRow(index_handle(state->rows[i]));
-//              logger->info("sdkjlasd\n");
-            },
-            aff);
+        const uint16_t mask = 1 << i;
+        if (bitmap & mask) {
+          dbk.k = write_keys[i];
+          auto aff = YCSBDistSlicerRouter::SliceToCoreId(locator.Locate(dbk));
+          root->AttachRoutine(
+              MakeContext(i, write_keys[i]), node,
+              [](const auto &ctx) {
+                auto &[state, index_handle, idx, write_key] = ctx;
+//                ycsb_dist::ycsb_dist_waiting_key = write_key;
+                WriteRow(index_handle(state->rows[idx]));
+              },
+              aff);
+        }
       }
     
     // not local node
-    } else {
+//    } else {
       
-    }
+//    }
   }
 }
 
@@ -225,6 +286,15 @@ void YcsbDistLoader::Run() {
   mem::ParallelPool::SetCurrentAffinity(-1);
   MasstreeIndex::ResetThreadInfo();
 
+  for (unsigned long i = 0; i < Client::g_table_size; i++) {
+    YcsbDist::Key dbk;
+    dbk.k = i;
+    auto slice_id = util::Instance<felis::SliceLocator<YcsbDist>>().Locate(dbk);
+    if (YCSBDistSlicerRouter::SliceToNodeId(slice_id) == node_id) {
+      assert(mgr.Get<ycsb_dist::YcsbDist>().Search(dbk.EncodeView(buf)) != nullptr);
+    }
+  }
+
   done = true;
 
   // Generate a random permutation
@@ -250,7 +320,8 @@ double Client::g_dist_factor = 0.00;
 
 Client::Client() noexcept
 {
-  rand.init(g_table_size, g_theta, 1238);
+  uint64_t node_id = util::Instance<NodeConfiguration>().node_id();
+  rand.init(g_table_size, g_theta, node_id);
 }
 
 BaseTxn *Client::CreateTxn(uint64_t serial_id)

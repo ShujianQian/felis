@@ -3,6 +3,7 @@
 #include "epoch.h"
 #include "routine_sched.h"
 #include "pwv_graph.h"
+#include "log.h"
 
 namespace felis {
 
@@ -590,7 +591,7 @@ void EpochExecutionDispatchService::AddBubble()
 
 bool EpochExecutionDispatchService::Preempt(int core_id, BasePieceCollection::ExecutionRoutine *routine_state, uint64_t sid, uint64_t ver)
 {
-  return false; // FIXME: Disable preemption from now
+//  return false; // FIXME: Disable preemption from now
 
   auto &lock = queues[core_id]->lock;
   bool can_preempt = true;
@@ -658,16 +659,16 @@ int EpochExecutionDispatchService::TraceDependency(uint64_t key)
   for (int core_id = 0; core_id < NodeConfiguration::g_nr_threads; core_id++) {
     auto max_item_percore = g_max_item / NodeConfiguration::g_nr_threads;
     auto &q = queues[core_id]->pq.pending;
-    if (q.end.load() > max_item_percore) puts("pending queue wraps around");
+    if (q.end.load() > max_item_percore) logger->error("pending queue wraps around");
     abort_if(q.end.load() < q.start.load(), "WTF? pending queue underflows");
     for (auto i = q.start.load(); i < q.end.load(); i++) {
       if (q.q[i % max_item_percore]->sched_key == key) {
-        printf("found %lu in the pending area of %d\n", key, core_id);
+        logger->error("found {} in the pending area of {}\n", key, core_id);
       }
     }
     for (auto i = 0; i < q.start.load(); i++) {
       if (q.q[i % max_item_percore]->sched_key == key) {
-        printf("found %lu in the consumed pending area of %d\n", key, core_id);
+        logger->error("found {} in the consumed pending area of {}\n", key, core_id);
       }
     }
 
@@ -676,7 +677,7 @@ int EpochExecutionDispatchService::TraceDependency(uint64_t key)
     while (ent != &hl) {
       if (ent->object()->key == key) {
         if (ent->object()->values.empty()) {
-          printf("found but empty hash entry of key %lu on core %d\n", key, core_id);
+          logger->error("found but empty hash entry of key {} on core {}\n", key, core_id);
         }
         return core_id;
       }

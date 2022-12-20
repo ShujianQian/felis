@@ -240,7 +240,7 @@ void BasePieceCollection::ExecutionRoutine::Run()
 
 bool BasePieceCollection::ExecutionRoutine::Preempt(uint64_t sid, uint64_t ver)
 {
-  return false; // FIXME: Disable preemption from now
+//  return false; // FIXME: Disable preemption from now
  
   auto &svc = util::Impl<PromiseRoutineDispatchService>();
   int core_id = scheduler()->thread_pool_id() - 1;

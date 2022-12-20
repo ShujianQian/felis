@@ -10,6 +10,9 @@
 #include "epoch.h"
 #include "opts.h"
 
+//extern std::atomic<uint64_t> tot_promise_routine_transported;
+//extern std::atomic<uint64_t> tot_promise_routine_received;
+
 void show_usage(const char *progname)
 {
   printf("Usage: %s -w workload -n node_name -c controller_ip -p cpu_count -s cpu_core_shift -m\n\n", progname);
@@ -108,6 +111,9 @@ int main(int argc, char *argv[])
 
   console.WaitForServerStatus(Console::ServerStatus::Exiting);
   go::WaitThreadPool();
+
+//  std::this_thread::sleep_for(std::chrono::milliseconds(10000));
+//  logger->info("Total promise routine sent: {} received: {}", tot_promise_routine_transported, tot_promise_routine_received);
 
   return 0;
 }

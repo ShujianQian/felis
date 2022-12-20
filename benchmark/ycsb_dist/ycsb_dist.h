@@ -71,7 +71,7 @@ public:
     uint64_t nr_threads_per_node = util::Instance<felis::NodeConfiguration>().g_nr_threads;
     uint64_t nr_threads = nr_nodes * nr_threads_per_node;
     uint64_t slice_per_thread = max_slice_id / nr_threads;
-    return (int) (u_slice_id / slice_per_thread);
+    return (int) ((u_slice_id / slice_per_thread) % nr_threads_per_node);
   }
 };
 
@@ -85,13 +85,17 @@ class YcsbDistLoader : public go::Routine {
   template <typename FuncT>
   inline void DoOnSlice(YcsbDist::Key &key, int core_id, FuncT func) {
     auto slice_id = util::Instance<felis::SliceLocator<YcsbDist>>().Locate(key);
+    auto nr_thread = util::Instance<felis::NodeConfiguration>().g_nr_threads;
 //    auto core_id = go::Scheduler::CurrentThreadPoolId() - 1;
     if (YCSBDistSlicerRouter::SliceToNodeId(slice_id) == node_id
         && YCSBDistSlicerRouter::SliceToCoreId(slice_id) == core_id) {
+//        && YCSBDistSlicerRouter::SliceToCoreId(slice_id) == core_id + (node_id - 1) * nr_thread) {
       func(slice_id, core_id);
     }
   }
 };
+
+//extern __thread uint64_t ycsb_dist_waiting_key;
 
 }
 
@@ -107,8 +111,10 @@ using namespace ycsb_dist;
 SHARD_TABLE(YcsbDist) {
   auto &key_val = key.k;
   // use the most significant 15 bits as the slice id
-  return (int16_t) (key_val >> 9);
+  auto slice_id_raw = key_val >> 9;
+  return (int16_t) (slice_id_raw == 0) ? 0x01 : slice_id_raw; // Hack: slice_id = 0 has a special meaning so force it nonzero.
 }
+
 
 }
 

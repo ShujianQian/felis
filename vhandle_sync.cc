@@ -3,6 +3,7 @@
 #include <syscall.h>
 #include "vhandle.h"
 #include "vhandle_sync.h"
+#include "log.h"
 
 namespace felis {
 
@@ -133,8 +134,8 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uin
 
     if (unlikely((wait_cnt & 0x7FFFFFF) == 0)) {
       int dep = dispatch.TraceDependency(ver);
-      printf("Deadlock on core %d? %lu (using %p) waiting for %lu (%d) node (%lu), ptr %p\n",
-             core_id, sid, routine, ver, dep, ver & 0xFF, ptr);
+      logger->error("Deadlock on core {}? {} (using {}) waiting for {} ({}) node ({}), ptr {}",
+                    core_id, sid, (void *) routine, ver, dep, ver & 0xFF, (void *)ptr);
       sleep(600);
     }
 
