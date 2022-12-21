@@ -213,6 +213,14 @@ class BaseFutureValue {
   void setReady() { ready = true; } //helper to set the ready flag
  protected:
   GenericEpochObject<BaseFutureValue> ConvertToEpochObject() { return EpochObject::Convert(this); }
+  GenericEpochObject<BaseFutureValue> ConvertDistributedEpochObject(int origin_node) {
+    auto &mgr = util::Instance<EpochManager>();
+    auto curr_epoch_nr = mgr.current_epoch_nr();
+    uint8_t *base_ptr = mgr.ptr(curr_epoch_nr, origin_node, 0);
+    assert(base_ptr < this);
+    uint64_t offset = ((uint8_t *) this) - base_ptr;
+    return {curr_epoch_nr, origin_node, offset};
+  }
 };
 
 }

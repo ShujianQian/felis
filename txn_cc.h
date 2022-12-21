@@ -134,6 +134,12 @@ class FutureValue final : public BaseFutureValue {
     util::Impl<PromiseRoutineTransportService>().TransportFutureValue(this);
     //BaseFutureValue::Signal();
   }
+
+  void SignalDistributed(T v, int origin_node) {
+    value = v;
+    util::Impl<PromiseRoutineTransportService>().TransportDistributedFutureValue(this, origin_node);
+  }
+
   T &Wait() {
     BaseFutureValue::Wait();
     return value;

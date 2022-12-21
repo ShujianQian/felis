@@ -247,6 +247,12 @@ void PaymentTxn::Run()
             },
             aff, (((bitmap & 0x04) && (filter & 0x04)) && !((bitmap & 0x01) && (filter & 0x01))) ? 1:0 ); //1:0 in the ternary to enable
             //we'll need to add a count for ourselves if the wait stays here but the signal doesn't
+
+            // test that the sending piece can only run locally and the buffer plan will not be incremented for sender
+//            if (((bitmap & 0x04) && (filter & 0x04)) && !((bitmap & 0x01) && (filter & 0x01))) {
+//              logger->info("Sender piece should not have incremented future value counter for the sender piece");
+//              abort();
+//            }
       }
     } else {
       root->AttachRoutine(
@@ -268,6 +274,12 @@ void PaymentTxn::Run()
           }, std::numeric_limits<uint64_t>::max(), ((bitmap & 0x04) && !(bitmap & 0x01)) ? 1:0); //1:0 in the ternary to enable
           //this part is bound for another node, set the flags for if we're sending a wait
           //we'll add a count for the wait unless the signal is also going
+
+          // test that the sending piece can only run locally
+//          if (bitmap & 0x01) {
+//            logger->info("Should not have a remote send future.");
+//            abort();
+//          }
     }
   }
 }

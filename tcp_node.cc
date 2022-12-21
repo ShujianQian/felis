@@ -313,9 +313,9 @@ size_t ReceiverChannel::PollRoutines(PieceRoutine **routines, size_t cnt)
 
       transport->OnCounterReceived();
       //TODO: put the magic number somewhere consistent
-    } else if ((header & 0xFFFF000000000000) == ((uint64_t)2<<55) ){ // Lets use the upper 2 bytes of the header as a flag
+    } else if ((header & 0xFFFF000000000000) == ((uint64_t)1<<55) ){ // Lets use the upper 2 bytes of the header as a flag
       
-      header -= ((uint64_t)2<<55);
+      header -= ((uint64_t)1<<55);
       auto buflen = 8 + header;
       auto buf = (uint8_t *) alloca(buflen);
       if (in->Peek(buf, buflen) < buflen) {
@@ -348,11 +348,14 @@ size_t ReceiverChannel::PollRoutines(PieceRoutine **routines, size_t cnt)
       if (in->Peek(buf, buflen) < buflen)
         break;
       routines[i++] = PieceRoutine::CreateFromPacket(buf + 8, header);
+      auto current_node = util::Instance<NodeConfiguration>().node_id();
+      auto routine_node = routines[i-1]->node_id;
+      assert(routine_node == current_node);
       in->Skip(buflen);
     }
   }
   // Counter for incoming futures is piggybacked alongside the counter for incoming pieces 
-  Complete(i + future_processed); 
+  Complete(i + future_processed);
   return i;
 }
 
@@ -528,9 +531,45 @@ void TcpNodeTransport::TransportFutureValue(BaseFutureValue *val)
 
     uint8_t *buffer = (uint8_t *) out->Alloc(buffer_size);
 
-    uint64_t header = buffer_size - 8 + ((uint64_t)2<<55); // 2^56 is our flag
+    uint64_t header = buffer_size - 8 + ((uint64_t)1<<55); // 2^56 is our flag
 
     GenericEpochObject<BaseFutureValue> epoch_info = val->ConvertToEpochObject();
+
+    memcpy(buffer,&header,8);
+    memcpy(buffer+8,&(epoch_info.epoch_nr),8);
+    memcpy(buffer+16,&(epoch_info.offset),8);
+    memcpy(buffer+24,&(epoch_info.node_id),4);
+
+    ((FutureValue<int32_t> *)val)->EncodeTo(buffer+28); //TODO remove cast
+
+    out->Finish(buffer_size);
+  }
+}
+
+void TcpNodeTransport::TransportDistributedFutureValue(BaseFutureValue *val, int origin_node)
+{
+  auto &conf = node_config();
+
+  for (uint8_t i = 0; i < val->nr_subscribed_nodes(); i++) {
+    auto node = val->subscribed_node(i);
+    if (node == conf.node_id()) {
+      val->setReady();
+      continue;
+    }
+
+    auto out = outgoing_channels.at(node);
+    // Fill in the correct buffer_size
+    size_t buffer_size = ((FutureValue<int32_t> *)val)->EncodeSize(); //TODO remove cast here as well
+    buffer_size += 3 * sizeof(uint64_t); //header, epoch, offset
+    buffer_size += sizeof(int); //node id
+    //the buffer is 28 bytes, plus the size of the encoded future value, which for now is always 4 bytes, for 32 total
+
+
+    uint8_t *buffer = (uint8_t *) out->Alloc(buffer_size);
+
+    uint64_t header = buffer_size - 8 + ((uint64_t)1<<55); // 2^56 is our flag
+
+    GenericEpochObject<BaseFutureValue> epoch_info = val->ConvertDistributedEpochObject(origin_node);
 
     memcpy(buffer,&header,8);
     memcpy(buffer+8,&(epoch_info.epoch_nr),8);

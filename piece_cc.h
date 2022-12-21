@@ -22,7 +22,8 @@ class PieceCollection : public BasePieceCollection {
   template <typename Func, typename Closure>
   PieceRoutine *AttachRoutine(const Closure &capture, int placement, Func func,
                               uint64_t affinity = std::numeric_limits<uint64_t>::max(),
-                              uint8_t signals = 0) {
+                              uint8_t signals = 0,
+                              uint8_t future_source_node_id = 0) {
     // C++17 allows converting from a non-capture lambda to a constexpr function pointer! Cool!
     constexpr void (*native_func)(const Closure &) = func;
 
@@ -38,6 +39,7 @@ class PieceCollection : public BasePieceCollection {
     routine->callback = static_func;
     routine->affinity = affinity;
     routine->fv_signals = signals; // TODO: Seperate signals to AttachFuture
+    routine->future_source_node_id = future_source_node_id;
     capture.EncodeTo(routine->capture_data);
 
     Add(routine);

@@ -21,6 +21,8 @@
 #include "util/os.h"
 #include "json11/json11.hpp"
 
+extern std::atomic<uint64_t> total_dist_generated;
+
 namespace felis {
 
 EpochClient *EpochClient::g_workload_client = nullptr;
@@ -193,6 +195,7 @@ void EpochClient::GenerateBenchmarks()
       all_txns[i - 1].per_core_txns[t]->txns[pos] = CreateTxn(GenerateSerialId(i, j));
     }
   }
+  logger->info("Generated {} distributed pieces in total", total_dist_generated);
 }
 
 void EpochClient::Start()
@@ -286,6 +289,10 @@ void CallTxnsWorker::Run()
     // workloads. For example, issuing takes a longer time.
     if ((i & 0xFF) == 0) transport.PrefetchInbound();
   }
+
+  auto core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+  logger->info("Core {} finished attaching promise routines for all txns.", core_id);
+
   set_urgent(false);
 
   // Here we set the finished flag a bit earlier, so that FinishCompletion()
@@ -534,7 +541,7 @@ void EpochClient::OnExecuteComplete()
   }
 }
 
-static constexpr size_t kEpochPromiseAllocationWorkerLimit = 1024_M;
+static constexpr size_t kEpochPromiseAllocationWorkerLimit = 4096_M;
 static constexpr size_t kEpochPromiseAllocationMainLimit = 64_M;
 static constexpr size_t kEpochPromiseMiniBrkSize = 4 * CACHE_LINE_SIZE;
 

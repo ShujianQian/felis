@@ -4,16 +4,14 @@
 #include "pwv_graph.h"
 #include "util/os.h"
 
+std::atomic<uint64_t> total_dist_generated = 0;
+
 namespace ycsb_dist {
 
 using namespace felis;
 
 static constexpr int kTotal = 10;
 static constexpr int kNrMSBContentionKey = 6;
-
-
-
-// static uint64_t *g_permutation_map;
 
 struct RMWStruct {
   uint64_t write_keys[kTotal];
@@ -22,26 +20,27 @@ struct RMWStruct {
 
 struct DistRMWState {
   VHandle *rows[kTotal];
-  InvokeHandle<DistRMWState, uint64_t> futures[kTotal];
+  VHandle *read_rows[kTotal];
 
-  FutureValue<uint64_t> future_vals[kTotal]; // future value alloc array
+  FutureValue<int32_t> future_vals[kTotal]; // future value alloc array
 
   NodeBitmap nodes;
 
-  std::atomic_ulong signal; // Used only if g_dependency
-  FutureValue<void> deps; // Used only if g_dependency
+  struct ReadRowLookupCompletion : public TxnStateCompletion<DistRMWState> {
+    void operator()(int id, BaseTxn::LookupRowResult lookup_results) {
+      state->read_rows[id] = lookup_results[0];
+      state->future_vals[id] = FutureValue<int32_t>();
+    }
+  };
 
-  struct LookupCompletion : public TxnStateCompletion<DistRMWState> {
-    void operator()(int id, BaseTxn::LookupRowResult rows) {
-      state->rows[id] = rows[0];
+  struct WriteRowLookupCompletion : public TxnStateCompletion<DistRMWState> {
+    void operator()(int id, BaseTxn::LookupRowResult lookup_results) {
+      state->rows[id] = lookup_results[0];
       if (id < kTotal - Client::g_extra_read) {
         bool last = (id == kTotal - Client::g_extra_read - 1);
-        handle(rows[0]).AppendNewVersion(last ? 0 : 1);
+        handle(lookup_results[0]).AppendNewVersion(last ? 0 : 1);
       }
-      // init default future values
-      for (int i = 0; i < kTotal; i++) {
-        state->future_vals[i] = FutureValue<uint64_t>();
-      }
+      state->future_vals[id] = FutureValue<int32_t>();
     }
   };
 };
@@ -50,24 +49,28 @@ template <>
 RMWStruct Client::GenerateTransactionInput<RMWStruct>()
 {
   RMWStruct s;
+  auto &locator = util::Instance<SliceLocator<YcsbDist>>();
+  sql::YcsbKey read_dbk, write_dbk;
 
   int nr_lsb = 63 - __builtin_clzll(g_table_size) - kNrMSBContentionKey;
   size_t mask = 0;
   if (nr_lsb > 0) mask = (1 << nr_lsb) - 1;
 
   for (int i = 0; i < kTotal; i++) {
+    bool dist = (rand.next() % 100) < g_dist_factor;
  again:
-//     s.write_keys[i] = g_permutation_map[rand.next() % g_table_size];
     s.write_keys[i] = rand.next() % g_table_size;
-//    if (i < g_contention_key) {
-//      s.write_keys[i] &= ~mask;
-//    } else {
-//      if ((s.write_keys[i] & mask) == 0)
-//        goto again;
-//    }
-    for (int j = 0; j < i; j++)
-      if (s.write_keys[i] == s.write_keys[j])
-        goto again;
+    s.read_keys[i] = rand.next() % g_table_size;
+    read_dbk.k = s.read_keys[i];
+    write_dbk.k = s.write_keys[i];
+    int read_node = YCSBDistSlicerRouter::SliceToNodeId(locator.Locate(read_dbk));
+    int write_node = YCSBDistSlicerRouter::SliceToNodeId(locator.Locate(write_dbk));
+    if (dist != (read_node != write_node)) goto again;
+    for (int j = 0; j < i; j++) {
+      if (s.write_keys[i] == s.write_keys[j]) goto again;
+      if (s.read_keys[i] == s.read_keys[j]) goto again;
+    }
+    if (read_node != write_node) total_dist_generated++;
   }
 
   return s;
@@ -95,7 +98,9 @@ public:
   void Run() override final;
   void Prepare() override final;
   void PrepareInsert() override final {}
-  static void WriteRow(TxnRow vhandle);
+  static void ReadWriteRowSingleNode(TxnRow read_vhandle, TxnRow write_vhandle);
+  static void ReadAndSend(TxnRow read_vhandle, int dest_node, FutureValue <int32_t> &future, int future_origin_node);
+  static void ReceiveAndWrite(TxnRow write_vhandle, FutureValue <int32_t> &future);
   static void ReadRow(TxnRow vhandle);
 
   template <typename Func>
@@ -118,74 +123,45 @@ void DistRMWTxn::Prepare()
 {
   YcsbDist::Key dbk[kTotal];
   auto current_node = util::Instance<NodeConfiguration>().node_id();
-  for (int i = 0; i < kTotal; i++) dbk[i].k = write_keys[i];
   INIT_ROUTINE_BRK(8192);
 
-////  txn_indexop_affinity = Ycsb
-//  auto &locator = util::Instance<SliceLocator<YcsbDist>>();
-//  state->nodes = GenerateNodeBitmap<YCSBDistSlicerRouter>(KeyParam<YcsbDist>(dbk, kTotal));
-//  int num_version_appended = 0;
-//  for (auto &p : state->nodes) {
-//    auto [node, bitmap] = p;
-//    auto op_ctx = TxnIndexOpContextEx<void>(index_handle(), state, bitmap, KeyParam<YcsbDist>(dbk, kTotal));
-////    auto op_ctx = TxnIndexOpContext();
-////    op_ctx.handle = index_handle();
-////    op_ctx.state = state;
-////    op_ctx.keys_bitmap = op_ctx.slices_bitmap = op_ctx.rels_bitmap = bitmap;
-////    op_ctx.node_id = node;
-////    op_ctx.src_node_id = current_node;
-//    if (node != current_node) {
-//      for (int i = 0; i < kTotal; i++) {
-//        const uint16_t mask = 1 << i;
-//        if (bitmap & mask) {
-//          num_version_appended++;
-//          auto aff = YCSBDistSlicerRouter::SliceToCoreId(locator.Locate(dbk[i]));
-//          root->AttachRoutine(
-//              op_ctx, node,
-//              [](auto &ctx) {
-//                auto completion = DistRMWState::LookupCompletion();
-//                completion.handle = ctx.handle;
-//                completion.state = GenericEpochObject<DistRMWState>(ctx.state);
-//                auto op = TxnIndexLookupOpImpl(ctx, 0); //FIXME: hard coded
-//                completion(0, op.result);
-//              }, aff);
-//        }
-//      }
-//    } else {
-//      for (int i = 0; i < kTotal; i++) {
-//        const uint16_t mask = 1 << i;
-//        if (bitmap & mask) {
-//          num_version_appended++;
-//          auto completion = DistRMWState::LookupCompletion();
-//          completion.handle = TxnHandle(op_ctx.handle);
-//          completion.state = GenericEpochObject<DistRMWState>(op_ctx.state);
-//          auto op = TxnIndexLookupOpImpl(op_ctx, 0); //FIXME: hard coded
-//          completion(0, op.result);
-//        }
-//      }
-//    }
-//  }
-//
-//  assert(num_version_appended == 1);
-
-//  txn_indexop_affinity = YCSBDistSlicerRouter::SliceToCoreId(locator.Locate(dbk[0]));
-  state->nodes =
-      TxnIndexLookup<YCSBDistSlicerRouter, DistRMWState::LookupCompletion, void>(
-        nullptr,
-        KeyParam<YcsbDist>(dbk, kTotal));
-
+  for (int i = 0; i < kTotal; i++) dbk[i].k = read_keys[i];
+  TxnIndexLookup<YCSBDistSlicerRouter, DistRMWState::ReadRowLookupCompletion, void>(
+      nullptr,
+      KeyParam<YcsbDist>(dbk, kTotal));
+  for (int i = 0; i < kTotal; i++) dbk[i].k = write_keys[i];
+//  state->nodes =
+  TxnIndexLookup<YCSBDistSlicerRouter, DistRMWState::WriteRowLookupCompletion, void>(
+      nullptr,
+      KeyParam<YcsbDist>(dbk, kTotal));
 }
 
 //namespace ycsb_dist {
 //__thread uint64_t ycsb_dist_waiting_key;
 //}
 
-void DistRMWTxn::WriteRow(TxnRow vhandle)
+void DistRMWTxn::ReadWriteRowSingleNode(TxnRow read_vhandle, TxnRow write_vhandle)
 {
-  auto dbv = vhandle.Read<YcsbDist::Value>();
+  auto dbv = read_vhandle.Read<YcsbDist::Value>();
   dbv.v.assign(Client::zero_data, 100);
   dbv.v.resize_junk(999);
-  vhandle.Write(dbv);
+  write_vhandle.Write(dbv);
+}
+
+void DistRMWTxn::ReadAndSend(TxnRow read_vhandle, int dest_node, FutureValue <int32_t> &future, int future_origin_node)
+{
+  auto dbv = read_vhandle.Read<YcsbDist::Value>();
+  future.Subscribe(dest_node);
+  future.SignalDistributed(0, future_origin_node); // send dummy dependency for now
+                                                   // sending the actual data (2000 Bytes) stress the network too much
+}
+
+void DistRMWTxn::ReceiveAndWrite(Txn<DistRMWState>::TxnRow write_vhandle, FutureValue<int32_t> &future) {
+  future.Wait();
+  sql::YcsbValue dbv;
+  dbv.v.assign(Client::zero_data, 100);
+  dbv.v.resize_junk(999);
+  write_vhandle.Write(dbv);
 }
 
 void DistRMWTxn::ReadRow(TxnRow vhandle)
@@ -196,52 +172,43 @@ void DistRMWTxn::ReadRow(TxnRow vhandle)
 void DistRMWTxn::Run()
 {
   auto &conf = util::Instance<NodeConfiguration>();
-  for (auto &p: state->nodes) {
-    auto [node, bitmap] = p;
+  int curr_node_id = conf.node_id();
 
-//    if (conf.node_id() == node) {
-
-//      for (int i = 0; i < kTotal - Client::g_extra_read - 1; i++) {
-//        state->futures[i] = UpdateForKey(
-//            node, state->rows[i],
-//            [](const auto &ctx, VHandle *row) {
-//
-//
-//              auto &[state, index_handle, reader_node] = ctx;
-//              WriteRow(index_handle(row));
-////	      state->future_vals[i].Subscribe(reader_node);
-////	      state->future_vals[i].Signal();
-//            }, reader_nodes[i]);
-//
-//      }
-
-//      auto aff = std::numeric_limits<uint64_t>::max();
-    YcsbDist::Key dbk;
-    auto &locator = util::Instance<SliceLocator<YcsbDist>>();
-      // auto aff = AffinityFromRows(bitmap, state->rows);
-      //
-//      auto aff = reader_nodes[];
-//      int node = 1;
-      for (int i = 0; i < kTotal; i++) {
-        const uint16_t mask = 1 << i;
-        if (bitmap & mask) {
-          dbk.k = write_keys[i];
-          auto aff = YCSBDistSlicerRouter::SliceToCoreId(locator.Locate(dbk));
-          root->AttachRoutine(
-              MakeContext(i, write_keys[i]), node,
-              [](const auto &ctx) {
-                auto &[state, index_handle, idx, write_key] = ctx;
-//                ycsb_dist::ycsb_dist_waiting_key = write_key;
-                WriteRow(index_handle(state->rows[idx]));
-              },
-              aff);
-        }
-      }
-    
-    // not local node
-//    } else {
-      
-//    }
+  YcsbDist::Key read_dbk;
+  YcsbDist::Key write_dbk;
+  auto &locator = util::Instance<SliceLocator<YcsbDist>>();
+  for (int i = 0; i < kTotal; i++) {
+    read_dbk.k = read_keys[i];
+    auto read_node = YCSBDistSlicerRouter::SliceToNodeId(locator.Locate(read_dbk));
+    auto read_aff = YCSBDistSlicerRouter::SliceToCoreId(locator.Locate(read_dbk));
+    write_dbk.k = write_keys[i];
+    auto write_node = YCSBDistSlicerRouter::SliceToNodeId(locator.Locate(write_dbk));
+    auto write_aff = YCSBDistSlicerRouter::SliceToCoreId(locator.Locate(write_dbk));
+    if (read_node == write_node) {
+      // read and write are one the same node, only one piece is required
+      root->AttachRoutine(
+          MakeContext(i), write_node,
+          [](const auto &ctx) {
+            auto &[state, index_handle, idx] = ctx;
+            ReadWriteRowSingleNode(index_handle(state->read_rows[idx]), index_handle(state->rows[idx]));
+          },
+          write_aff);
+    } else {
+      root->AttachRoutine(
+          MakeContext(i, write_node, curr_node_id), read_node,
+          [](const auto &ctx) {
+            auto &[state, index_handle, idx, dest_node, future_origin_node] = ctx;
+            ReadAndSend(index_handle(state->read_rows[idx]), dest_node, state->future_vals[idx], future_origin_node);
+          },
+          read_aff);
+      root->AttachRoutine(
+          MakeContext(i), write_node,
+          [](const auto &ctx) {
+            auto &[state, index_handle, idx] = ctx;
+            ReceiveAndWrite(index_handle(state->rows[idx]), state->future_vals[idx]);
+          },
+          write_aff, 1, read_node);
+    }
   }
 }
 
@@ -260,9 +227,6 @@ void YcsbDistLoader::Run() {
     util::Cpu info;
     info.set_affinity(t);
     info.Pin();
-
-//    unsigned long start = t * Client::g_table_size / nr_threads;
-//    unsigned long end = (t + 1) * Client::g_table_size / nr_threads;
 
     for (unsigned long i = 0; i < Client::g_table_size; i++) {
       YcsbDist::Key dbk;
@@ -296,19 +260,6 @@ void YcsbDistLoader::Run() {
   }
 
   done = true;
-
-  // Generate a random permutation
-#if 0
-  g_permutation_map = new uint64_t[Client::g_table_size];
-  for (size_t i = 0; i < Client::g_table_size; i++) {
-    g_permutation_map[i] = i;
-  }
-  util::FastRandom perm_rand(1001);
-  for (size_t i = Client::g_table_size - 1; i >= 1; i--) {
-    auto j = perm_rand.next() % (i + 1);
-    std::swap(g_permutation_map[j], g_permutation_map[i]);
-  }
-#endif
 }
 
 size_t Client::g_table_size = 1 << 24;
@@ -316,7 +267,7 @@ double Client::g_theta = 0.00;
 int Client::g_extra_read = 0;
 int Client::g_contention_key = 0;
 bool Client::g_dependency = false;
-double Client::g_dist_factor = 0.00;
+int Client::g_dist_factor = 0;
 
 Client::Client() noexcept
 {

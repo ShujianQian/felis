@@ -273,12 +273,13 @@ void NodeConfiguration::CollectBufferPlan(BasePieceCollection *root, unsigned lo
   auto src_node = node_id();
   for (size_t i = 0; i < root->nr_routines(); i++) {
     auto *routine = root->routine(i);
-    CollectBufferPlanImpl(routine, cnts, 0, src_node);
+    auto future_src_node = routine->future_source_node_id == 0 ? node_id() : routine->future_source_node_id;
+    CollectBufferPlanImpl(routine, cnts, 0, src_node, future_src_node);
   }
 }
 
 void NodeConfiguration::CollectBufferPlanImpl(PieceRoutine *routine, unsigned long *cnts,
-                                              int level, int src_node)
+                                              int level, int src_node, int future_src_node)
 {
   abort_if(level >= PromiseRoutineTransportService::kPromiseMaxLevels,
            "promise level {} too deep", level);
@@ -289,7 +290,8 @@ void NodeConfiguration::CollectBufferPlanImpl(PieceRoutine *routine, unsigned lo
     dst_node = src_node;
   if (dst_node < 255) {
     // One for the routine, more for any waits being sent with it
-    cnts[BatchBufferIndex(level, src_node, dst_node)]+= 1+routine->fv_signals; 
+    cnts[BatchBufferIndex(level, src_node, dst_node)]+= 1;
+    cnts[BatchBufferIndex(level, future_src_node, dst_node)] += routine->fv_signals;
   } else {
     // Dynamic piece. We need to increment for all dst node.
     for (auto d = 1; d <= nr_nodes(); d++) {
@@ -302,7 +304,7 @@ void NodeConfiguration::CollectBufferPlanImpl(PieceRoutine *routine, unsigned lo
 
   for (size_t i = 0; i < routine->next->nr_routines(); i++) {
     auto *subroutine = routine->next->routine(i);
-    CollectBufferPlanImpl(subroutine, cnts, level + 1, dst_node);
+    CollectBufferPlanImpl(subroutine, cnts, level + 1, dst_node, future_src_node);
   }
 }
 

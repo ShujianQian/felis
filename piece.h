@@ -47,7 +47,8 @@ struct PieceRoutine {
    * Shujian: I believe this is never used.
    */
   uint8_t fv_signals;
-  uint8_t __padding__[15];
+  uint8_t future_source_node_id;
+  uint8_t __padding__[14];
 
   static PieceRoutine *CreateFromCapture(size_t capture_len);
   static PieceRoutine *CreateFromPacket(uint8_t *p, size_t packet_len);
@@ -144,6 +145,7 @@ class PromiseRoutineTransportService {
 
   virtual void TransportPromiseRoutine(PieceRoutine *routine) = 0;
   virtual void TransportFutureValue(BaseFutureValue *val) {}
+  virtual void TransportDistributedFutureValue(BaseFutureValue *val, int origin_node) {}
   virtual bool PeriodicIO(int core) { return false; }
   virtual void PrefetchInbound() {};
   virtual void FinishCompletion(int level) {}

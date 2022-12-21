@@ -239,7 +239,7 @@ class NodeConfiguration {
    * @param level
    * @param src_node
    */
-  void CollectBufferPlanImpl(PieceRoutine *routine, unsigned long *cnts, int level, int src);
+  void CollectBufferPlanImpl(PieceRoutine *routine, unsigned long *cnts, int level, int src, int future_src_node = 0);
 };
 
 template <typename T>

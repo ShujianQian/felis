@@ -43,7 +43,7 @@ class Client : public felis::EpochClient {
   static int g_extra_read;
   static int g_contention_key;
   static bool g_dependency;
-  static double g_dist_factor;
+  static int g_dist_factor;
 
   Client() noexcept;
   unsigned int LoadPercentage() final override { return 100; }
