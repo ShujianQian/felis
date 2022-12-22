@@ -266,7 +266,7 @@ void BaseFutureValue::Wait()
     }
 
     //preempt_times++;
-    if ((wait_cnt & 0x7FFFFFF) == 0) {
+    if ((wait_cnt & 0xFF) == 0) {
       auto routine = go::Scheduler::Current()->current_routine();
       if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt(0, 0)) {
         continue;

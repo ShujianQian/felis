@@ -19,7 +19,15 @@ class ConservativePriorityScheduler final : public PrioritySchedulingPolicy {
   }
 
   bool ShouldPickWaiting(const WaitState &ws) override;
+  /**
+   * Picks the next PieceRoutine to run from the prority queue.
+   * @return Next PieceRoutine to run (and its state)
+   */
   PriorityQueueValue *Pick() override;
+  /**
+   * Remove a priority queue entry from the PQ and collects garbage in hashtable if needed.
+   * @param value Priority queue entry to be removed from the queue.
+   */
   void Consume(PriorityQueueValue *value) override;
   void IngestPending(PriorityQueueHashEntry *hent, PriorityQueueValue *value) override;
   void Reset() override {
@@ -29,7 +37,7 @@ class ConservativePriorityScheduler final : public PrioritySchedulingPolicy {
  public:
   static ConservativePriorityScheduler *New(size_t maxlen, int numa_node);
  private:
-  PriorityQueueHeapEntry q[];
+  PriorityQueueHeapEntry q[];  /*!< The actual priority queue */
 };
 
 ConservativePriorityScheduler *ConservativePriorityScheduler::New(size_t maxlen, int numa_node)
@@ -40,15 +48,19 @@ ConservativePriorityScheduler *ConservativePriorityScheduler::New(size_t maxlen,
 
 void ConservativePriorityScheduler::IngestPending(PriorityQueueHashEntry *hent, PriorityQueueValue *value)
 {
+  // if the hashtable_entry did not contain any actual PieceRoutines (i.e. was not in the priority queue)
+  // add it to the priority queue
   if (hent->values.empty()) {
     q[len++] = {hent->key, hent};
     std::push_heap(q, q + len, Greater);
   }
+  // insert the PriorityQueue value (PieceRoutine) into the list in the hashtable entry
   value->InsertAfter(hent->values.prev);
 }
 
 bool ConservativePriorityScheduler::ShouldPickWaiting(const WaitState &ws)
 {
+  // if nothing in the new piece priority queue, then always pick a waiting piece
   if (len == 0)
     return true;
     
@@ -63,6 +75,7 @@ bool ConservativePriorityScheduler::ShouldPickWaiting(const WaitState &ws)
 
 PriorityQueueValue *ConservativePriorityScheduler::Pick()
 {
+  // directly picks from the top of the priority queue
   return q[0].ent->values.next->object();
 }
 
@@ -471,6 +484,7 @@ found:
 void
 EpochExecutionDispatchService::ProcessPending(PriorityQueue &q)
 {
+  // this works because there's only one consumer modifying start
   size_t pstart = q.pending.start.load(std::memory_order_acquire);
   long plen = q.pending.end.load(std::memory_order_acquire) - pstart;
 
@@ -501,6 +515,8 @@ EpochExecutionDispatchService::Peek(int core_id, DispatchPeekListener &should_po
   }
 
 retry:
+  // first check if anything is worth running in the zero queue
+  // if so run that directly
   zstart = zq.start.load(std::memory_order_acquire);
   if (zstart < zq.end.load(std::memory_order_acquire)) {
     state.running = State::kRunning;
@@ -510,7 +526,7 @@ retry:
       state.current_sched_key = r->sched_key;
       return true;
     }
-    return false;
+    return false;  // why not checking the rest?
   }
 
   // Setting state.running without poking around the data structure is very

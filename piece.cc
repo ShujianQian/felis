@@ -192,13 +192,14 @@ void BasePieceCollection::ExecutionRoutine::Run()
   trace(TRACE_EXEC_ROUTINE "new ExecutionRoutine up and running on {}", core_id);
 
   PieceRoutine *next_r;
-  bool give_up = false;
+  bool give_up = false;  /*!< should I exit and let another ExecutionRoutine continue? */
   // BasePromise::ExecutionRoutine *next_state = nullptr;
   go::Scheduler *sched = scheduler();
 
   auto should_pop = PromiseRoutineDispatchService::GenericDispatchPeekListener(
       [&next_r, &give_up, sched]
       (PieceRoutine *r, BasePieceCollection::ExecutionRoutine *state) -> bool {
+        // If there's another ExecutionRoutine to wake up, then wake up that one and kill myself
         if (state != nullptr) {
           if (state->is_detached()) {
             trace(TRACE_EXEC_ROUTINE "Wakeup Coroutine {}", (void *) state);
@@ -210,6 +211,7 @@ void BasePieceCollection::ExecutionRoutine::Run()
           give_up = true;
           return false;
         }
+        // if the PieceRoutine was not run before (and preempted)
         give_up = false;
         next_r = r;
         // next_state = state;
@@ -249,8 +251,13 @@ bool BasePieceCollection::ExecutionRoutine::Preempt(uint64_t sid, uint64_t ver)
 
   //logger->info("preempt core: {} sid: {} ver: {}",core_id,sid,ver);
 
+  // checks if there's something else to switch to (other waiting routines or new pieces to run)
+  // if so, preempt
   if (svc.Preempt(core_id, this, sid, ver)) {
  sleep:
+
+    // Shujian: why does it always spawn a new ExecutionRoutine first?
+    // what if there's some other waiting routine to run? shouldn't we run that first?
     if (spawn) {
       sched->WakeUp(new ExecutionRoutine());
     }
@@ -262,8 +269,10 @@ bool BasePieceCollection::ExecutionRoutine::Preempt(uint64_t sid, uint64_t ver)
         [this, &spawn]
         (PieceRoutine *, BasePieceCollection::ExecutionRoutine *state) -> bool {
           if (state == this)
+            // if I myself should run, then return from Preempt call
             return true;
           if (state != nullptr) {
+            // if there's a ExecutionRoutine to wake up, don't spawn and just run that
             trace(TRACE_EXEC_ROUTINE "Unfinished encoutered, no spawn.");
             if (state->is_detached()) {
               state->Init();
@@ -271,18 +280,23 @@ bool BasePieceCollection::ExecutionRoutine::Preempt(uint64_t sid, uint64_t ver)
             }
             spawn = false;
           } else {
+            // when there's a new piece routine to run, spawn
             trace(TRACE_EXEC_ROUTINE "Spawning because I saw a new piece");
           }
           return false;
         });
 
     trace(TRACE_EXEC_ROUTINE "Just got up!");
+
+    // when there's anything other than a waiting ExecutionRoutine to run, spawn a new ExecutionRoutine
     if (!svc.Peek(core_id, should_pop))
       goto sleep;
 
     set_busy_poll(false);
     return true;
   }
+
+  // There's nothing to switch to, continue spinning
   return false;
 }
 

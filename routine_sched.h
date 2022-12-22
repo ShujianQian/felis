@@ -13,12 +13,13 @@ struct PriorityQueueValue : public util::GenericListNode<PriorityQueueValue> {
   BasePieceCollection::ExecutionRoutine *state;
 };
 
+/** state of a waiting ExecutionRoutine (preempted) */
 struct WaitState {
-  BasePieceCollection::ExecutionRoutine *state;
-  uint64_t sched_key;
-  uint64_t preempt_ts;
-  uint64_t preempt_key; // modified scheduling key for out-of-order behaviors
-  uint64_t preempt_times;
+  BasePieceCollection::ExecutionRoutine *state;  /*!< go::Routine of the caller of preempt */
+  uint64_t sched_key;  /*!< scheduling key of the caller routine of the preempt */
+  uint64_t preempt_ts;  /*!< never used */
+  uint64_t preempt_key;  /*!< used to order the waiting routines, allows backoff */
+  uint64_t preempt_times;  /*!< number of times that this routine is preempted */
 };
 
 // for use ordering WaitStates in a heap
@@ -33,8 +34,8 @@ static bool Greater(const WaitState &a, const WaitState &b) {
 }
 
 struct PriorityQueueHashEntry : public util::GenericListNode<PriorityQueueHashEntry> {
-  util::GenericListNode<PriorityQueueValue> values;
-  uint64_t key;
+  util::GenericListNode<PriorityQueueValue> values;  /*!< list of Pieces with the same priority as in key */
+  uint64_t key;  /*!< sched_key of the collection of PieceRoutines */
 };
 
 static constexpr size_t kPriorityQueuePoolElementSize =
@@ -91,24 +92,25 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   // This is not a normal priority queue because lots of priorities are
   // duplicates! Therefore, we use a hashtable to deduplicate them.
   struct PriorityQueue {
-    PrioritySchedulingPolicy *sched_pol;
-    PriorityQueueHashHeader *ht; // Hashtable. First item is a sentinel
+    PrioritySchedulingPolicy *sched_pol;  /*!< This is where the actual priority queue locates */
+    PriorityQueueHashHeader *ht; /*!< Hashtable. First item is a sentinel */
     struct {
       PieceRoutine **q;
       std::atomic_uint start;
       std::atomic_uint end;
-    } pending; // Pending inserts into the heap and the hashtable
+    } pending; /*!< Pending inserts into the heap and the hashtable */
 
     struct {
       // Min-heap
       WaitState states[kOutOfOrderWindow];
-      uint32_t unique_preempts; // statistics tracking
-      uint32_t len;
-    } waiting;
+      uint32_t unique_preempts; /*!< number of successful preempts, statistics tracking */
+      uint32_t len;  /*!< number of waiting ExecutionRoutines */
+    } waiting;  /*!< a priority queue of waiting ExecutionRoutines */
 
-    mem::Brk brk; // memory allocator for hashtables entries and queue values
+    mem::Brk brk; /*!< memory allocator for hashtables entries and queue values */
   };
 
+  /** A none wrapping buffer of PieceRoutine ptrs */
   struct ZeroQueue {
     PieceRoutine **q;
     std::atomic_ulong end;
@@ -117,8 +119,8 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
 
   struct State {
     uint64_t current_sched_key;
-    uint64_t ts;
-    CompleteCounter complete_counter;
+    uint64_t ts;  /*!< Monotonic incrementing timestamp, but never used. */
+    CompleteCounter complete_counter;  /*!< Local counter of completed piece routines. */
 
     static constexpr int kSleeping = 0;
     static constexpr int kRunning = 1;
@@ -145,8 +147,18 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   std::atomic_ulong tot_bubbles;
 
  private:
+  /**
+   * Adds a PieceRoutine into the hashtable and the actual priority queue inside the sched_pol.
+   * @param q
+   * @param r
+   * @param state
+   */
   void AddToPriorityQueue(PriorityQueue &q, PieceRoutine *&r,
                           BasePieceCollection::ExecutionRoutine *state = nullptr);
+  /**
+   * Process the PieceRoutines that are added to the pending buffer of the PQ but not the hash table.
+   * @param q
+   */
   void ProcessPending(PriorityQueue &q);
 
  public:
@@ -159,6 +171,14 @@ class EpochExecutionDispatchService : public PromiseRoutineDispatchService {
   void Add(int core_id, PieceRoutine **routines, size_t nr_routines) final override;
   void AddBubble() final override;
   bool Peek(int core_id, DispatchPeekListener &should_pop) final override;
+  /**
+   * Pushes a ExecutionRoutine onto the waiting queue of the scheduler if possible
+   * @param core_id
+   * @param state
+   * @param sid
+   * @param ver
+   * @return
+   */
   bool Preempt(int core_id, BasePieceCollection::ExecutionRoutine *state, uint64_t sid, uint64_t ver) final override;
   void Reset() final override;
   void Complete(int core_id) final override;
