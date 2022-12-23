@@ -79,6 +79,22 @@ void coro_reuse_coroutine(struct coroutine *coro, struct coroutine *main_co,
 	coro->reg[CORO_SP_IDX] = coro->shared_stack->aligned_ret_ptr;
 }
 
+void coro_reset_coroutine(struct coroutine *coro)
+{
+  assert(coro != NULL);
+  assert(coro->shared_stack != NULL);
+  assert(coro->shared_stack->aligned_ret_ptr != NULL);
+  assert(coro->fptr != NULL);
+  coro->reg[0] = 0;
+  coro->reg[1] = 0;
+  coro->reg[2] = 0;
+  coro->reg[3] = 0;
+  coro->reg[4] = coro->fptr;
+  coro->reg[5] = coro->shared_stack->aligned_ret_ptr;
+  coro->reg[6] = 0;
+  coro->reg[7] = 0;
+}
+
 struct coro_shared_stack *coro_create_shared_stack(size_t size,
 						   bool enable_guard_page, bool lock)
 {

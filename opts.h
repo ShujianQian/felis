@@ -95,6 +95,8 @@ struct Options {
   static inline const auto kEnablePWV = Option("EnablePWV", false);
   static inline const auto kPWVGraphAlloc = Option("PWVGraphAlloc");
 
+  static inline const auto kUseCoroutineScheduler = Option("UseCoroSched", false);
+
   static inline bool ParseExtentedOptions(std::string arg)
   {
     for (auto o: Option::g_options) {

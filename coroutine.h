@@ -113,6 +113,11 @@ void coro_reuse_coroutine(struct coroutine *coro, struct coroutine *main_co,
 			  coro_func_t coro_func, void *args);
 
 /**
+ * Resets the coroutine using it's previous function pointer and stack pointer
+ */
+void coro_reset_coroutine(struct coroutine *coro);
+
+/**
  * Returns the pointer to the current non-main coroutine. The caller of the function must be a non-main coroutine.
  */
 #define coro_get_co() (coro_glbl_tls_current_co)

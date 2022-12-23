@@ -146,6 +146,11 @@ class PromiseRoutineTransportService {
   virtual void TransportPromiseRoutine(PieceRoutine *routine) = 0;
   virtual void TransportFutureValue(BaseFutureValue *val) {}
   virtual void TransportDistributedFutureValue(BaseFutureValue *val, int origin_node) {}
+  /**
+   * Performs sending and receiving of PieceRoutines and FutureValues
+   * @param core
+   * @return Should continue IO?
+   */
   virtual bool PeriodicIO(int core) { return false; }
   virtual void PrefetchInbound() {};
   virtual void FinishCompletion(int level) {}

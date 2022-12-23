@@ -7,38 +7,6 @@
 
 namespace felis {
 
-class ConservativePriorityScheduler final : public PrioritySchedulingPolicy {
-  ~ConservativePriorityScheduler() {}
-  struct PriorityQueueHeapEntry {
-    uint64_t key;
-    PriorityQueueHashEntry *ent;
-  };
-
-  static bool Greater(const PriorityQueueHeapEntry &a, const PriorityQueueHeapEntry &b) {
-    return a.key > b.key;
-  }
-
-  bool ShouldPickWaiting(const WaitState &ws) override;
-  /**
-   * Picks the next PieceRoutine to run from the prority queue.
-   * @return Next PieceRoutine to run (and its state)
-   */
-  PriorityQueueValue *Pick() override;
-  /**
-   * Remove a priority queue entry from the PQ and collects garbage in hashtable if needed.
-   * @param value Priority queue entry to be removed from the queue.
-   */
-  void Consume(PriorityQueueValue *value) override;
-  void IngestPending(PriorityQueueHashEntry *hent, PriorityQueueValue *value) override;
-  void Reset() override {
-    abort_if(len > 0, "Reset() called, but len {} > 0", len);
-  }
-
- public:
-  static ConservativePriorityScheduler *New(size_t maxlen, int numa_node);
- private:
-  PriorityQueueHeapEntry q[];  /*!< The actual priority queue */
-};
 
 ConservativePriorityScheduler *ConservativePriorityScheduler::New(size_t maxlen, int numa_node)
 {
@@ -607,7 +575,7 @@ void EpochExecutionDispatchService::AddBubble()
 
 bool EpochExecutionDispatchService::Preempt(int core_id, BasePieceCollection::ExecutionRoutine *routine_state, uint64_t sid, uint64_t ver)
 {
-//  return false; // FIXME: Disable preemption from now
+  return false; // FIXME: Disable preemption from now
 
   auto &lock = queues[core_id]->lock;
   bool can_preempt = true;

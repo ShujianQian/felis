@@ -22,6 +22,7 @@
 #include "gopp/gopp.h"
 #include "gopp/channels.h"
 #include "literals.h"
+#include "coro_sched.h"
 
 namespace felis {
 
@@ -206,6 +207,9 @@ class CoroutineModule : public Module<CoreModule> {
     // In the future, we might need another GC thread?
     Module<CoreModule>::InitModule("config");
 
+    if (Options::kUseCoroutineScheduler)
+      CoroSched::g_use_coro_sched = true;
+
     static CoroutineStackAllocator alloc;
     go::InitThreadPool(NodeConfiguration::g_nr_threads + 1, &alloc);
 
@@ -213,6 +217,7 @@ class CoroutineModule : public Module<CoreModule> {
       // We need to change core affinity by kCoreShifting
       auto r = go::Make(
           [i]() {
+            CoroSched::Init();
             util::Cpu info;
             info.set_affinity(i - 1);
             info.Pin();
