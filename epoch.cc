@@ -22,6 +22,8 @@
 #include "json11/json11.hpp"
 
 extern std::atomic<uint64_t> total_dist_generated;
+extern uint64_t epoch_nr;
+extern uint64_t generated_buffer_plan[256][256][256];
 
 namespace felis {
 
@@ -188,6 +190,7 @@ void EpochClient::GenerateBenchmarks()
 {
   all_txns = new EpochTxnSet[g_max_epoch - 1];
   for (auto i = 1; i < g_max_epoch; i++) {
+    epoch_nr = i - 1;
     for (uint64_t j = 1; j <= NumberOfTxns(); j++) {
       auto d = std::div((int)(j - 1), NodeConfiguration::g_nr_threads);
       auto t = d.rem, pos = d.quot;
@@ -195,7 +198,27 @@ void EpochClient::GenerateBenchmarks()
       all_txns[i - 1].per_core_txns[t]->txns[pos] = CreateTxn(GenerateSerialId(i, j));
     }
   }
+  auto &conf = util::Instance<NodeConfiguration>();
+  int curr_node = conf.node_id();
   logger->info("Generated {} distributed pieces in total", total_dist_generated);
+  fmt::memory_buffer buf;
+  fmt::format_to(buf, "Generated buffer plan on node {}\n", curr_node);
+  for (int k = 0; k < g_max_epoch - 1; k++) {
+    fmt::format_to(buf, "Epoch {}\n", k + 1);
+    fmt::format_to(buf, "{:>10} ", "src\\dest");
+    for (auto i = 0; i < conf.nr_nodes(); i++) {
+      fmt::format_to(buf, "{:10} ", i + 1);
+    }
+    fmt::format_to(buf, "\n");
+    for (auto i = 0; i < conf.nr_nodes(); i++) {
+      fmt::format_to(buf, "{:10} ", i + 1);
+      for (auto j = 0; j < conf.nr_nodes(); j++) {
+        fmt::format_to(buf, "{:10} ", generated_buffer_plan[k][i][j]);
+      }
+      fmt::format_to(buf, "\n");
+    }
+  }
+  logger->info("{}", std::string(buf.begin(), buf.end()));
 }
 
 void EpochClient::Start()

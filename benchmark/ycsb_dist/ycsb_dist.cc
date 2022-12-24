@@ -3,8 +3,11 @@
 #include "txn_cc.h"
 #include "pwv_graph.h"
 #include "util/os.h"
+#include "node_config.h"
 
 std::atomic<uint64_t> total_dist_generated = 0;
+uint64_t epoch_nr = 0;
+uint64_t generated_buffer_plan[255][255][255] = {0};
 
 namespace ycsb_dist {
 
@@ -56,6 +59,9 @@ RMWStruct Client::GenerateTransactionInput<RMWStruct>()
   size_t mask = 0;
   if (nr_lsb > 0) mask = (1 << nr_lsb) - 1;
 
+  auto &conf = util::Instance<NodeConfiguration>();
+  int curr_node = conf.node_id();
+
   for (int i = 0; i < kTotal; i++) {
     bool dist = (rand.next() % 100) < g_dist_factor;
  again:
@@ -71,6 +77,13 @@ RMWStruct Client::GenerateTransactionInput<RMWStruct>()
       if (s.read_keys[i] == s.read_keys[j]) goto again;
     }
     if (read_node != write_node) total_dist_generated++;
+    if (read_node == write_node) {
+      if (read_node != curr_node) generated_buffer_plan[epoch_nr][curr_node - 1][read_node - 1]++;
+    } else {
+      if (read_node != curr_node) generated_buffer_plan[epoch_nr][curr_node - 1][read_node - 1]++;
+      if (write_node != curr_node) generated_buffer_plan[epoch_nr][curr_node - 1][write_node - 1]++;
+      generated_buffer_plan[epoch_nr][read_node - 1][write_node - 1]++;
+    }
   }
 
   return s;
