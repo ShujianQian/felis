@@ -4,6 +4,7 @@
 #include "literals.h"
 #include "gc.h"
 #include "commit_buffer.h"
+#include "coro_sched.h"
 
 namespace felis {
 
@@ -257,7 +258,7 @@ void BaseFutureValue::Wait()
   //int preempt_times = 0;
   int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
   auto &transport = util::Impl<PromiseRoutineTransportService>();
-  
+
   while (!ready) {
     wait_cnt++;
 
@@ -266,13 +267,17 @@ void BaseFutureValue::Wait()
     }
 
     //preempt_times++;
-    if ((wait_cnt & 0xFF) == 0) {
-      auto routine = go::Scheduler::Current()->current_routine();
-      if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt(0, 0)) {
-        continue;
-      }
+    auto routine = go::Scheduler::Current()->current_routine();
+    bool preempted;
+    if (Options::kUseCoroutineScheduler) {
+      preempted = coro_sched->WaitForVHandleVal();
+    } else {
+      preempted = ((BasePieceCollection::ExecutionRoutine *) routine)->Preempt(0, 0);
     }
-    
+    if (preempted) {
+      continue;
+    }
+
     _mm_pause();
   }
   ready = false;

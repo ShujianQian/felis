@@ -4,6 +4,8 @@
 #include "vhandle.h"
 #include "vhandle_sync.h"
 #include "log.h"
+#include "opts.h"
+#include "coro_sched.h"
 
 namespace felis {
 
@@ -147,7 +149,13 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uin
 
     if ((wait_cnt & 0x00FF) == 0) {
       //preempt_times++;
-      if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt(sid, ver)) {
+      bool preempted;
+      if (Options::kUseCoroutineScheduler) {
+        preempted = coro_sched->WaitForVHandleVal();
+      } else {
+        preempted = ((BasePieceCollection::ExecutionRoutine *) routine)->Preempt(sid, ver);
+      }
+      if (preempted) {
         // logger->info("Preempt back");
         // Broken???
         return true;
@@ -210,7 +218,13 @@ void SimpleSync::WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ve
 
     if ((wait_cnt & 0x00FF) == 0) {
       //preempt_times++;
-      if (((BasePieceCollection::ExecutionRoutine *) routine)->Preempt(sid, ver)) {
+      bool preempted;
+      if (Options::kUseCoroutineScheduler) {
+        preempted = coro_sched->WaitForVHandleVal();
+      } else {
+        preempted = ((BasePieceCollection::ExecutionRoutine *) routine)->Preempt(sid, ver);
+      }
+      if (preempted) {
         continue;
       }
     }

@@ -27,12 +27,16 @@ public:
     uint64_t core_id;  /*!< where this CoroStack belongs to, used to add to the core's ready queue */
     uint64_t sched_key;  /*!< the scheduling key of the waiting coroutine */
     uint64_t preempt_key;  /*!< the sched key with backoff of the waiting coroutine */
+    uint64_t preempt_times;  /*!< number of preempt called, used to calculated linear backoff */
     static bool MinHeapCompare(CoroStack *a,  CoroStack *b);  /*!< compare function to build heap */
   };
 
   static constexpr size_t kMaxNrCoroutine = 1000;  /*!< number of coroutines allocated at initialization */
-  static constexpr size_t kCoroutineStackSize = 8192;  /*!< min size of the coroutines' stack */
-  static constexpr size_t kOOOBufferSize = 25;  /*!< size of the out of order execution window */
+  static constexpr size_t kCoroutineStackSize = 65536;  /*!< min size of the coroutines' stack */
+  static constexpr size_t kOOOBufferSize = 100;  /*!< size of the out of order execution window */
+  static constexpr uint64_t kPreemptKeyThreshold = 17000;  /*!< backoff step for preempted pieces */
+  static constexpr uint64_t kMaxBackoff = 40;  /*!< max number of backoff steps for preempted pieces */
+  static constexpr uint64_t kPeriodicIOInterval = 0x3F;  /*!< PeriodicIO event trigger interval */
   static bool g_use_coro_sched;  /*!< if set use the coroutine scheduler instead of the normal ExecutionRoutine one */
 
   uint64_t core_id;  /*!< id of the core where this scheduler belongs to */
@@ -40,16 +44,20 @@ public:
   bool is_running;  /*!< used to check whether StartCoroExec has overlapping calls */
   std::list<CoroStack *> free_corostack_list;  /*!< list of pre-allocated but unused coroutines */
   CoroStack *ooo_buffer[kOOOBufferSize];  /*!< out of order buffer, kept as a min heap */
-  size_t ooo_bufer_len = 0;  /*!< number of ooo_buffer entry used */
+  size_t ooo_buffer_len = 0;  /*!< number of ooo_buffer entry used */
   EpochExecutionDispatchService &svc;  /*!< reference to the dispatch service where we get our new routines */
                                        /*!< **Caution**: this only works with the EpochExecutionDispatchService */
   PromiseRoutineTransportService &transport;  /*!< reference to the transport service where we do periodic IOs */
+  uint64_t periodic_counter = 0;  /*!< counter for triggering periodic events */
 
   CoroSched() = delete;
   explicit CoroSched(uint64_t core_id);  /*!< Pre-allocates the coroutines */
 
   static void Init();  /*!< Initializes CoroSched on a core. Must be called once before executing */
   void StartCoroExec();  /*!< The entry point of the Coroutine Scheduler. To be called by the ExecutionRoutine */
+
+  bool WaitForVHandleVal();  /*!< calls when waiting for a vhandle value and tries to preempt */
+  bool WaitForFutureValue(FutureValue<uint32_t> *future);  /*!< calls when waiting for a future */
 
 private:
   static void WorkerFunction();  /*!< worker function executed by the coroutines */
@@ -60,10 +68,10 @@ private:
 
   /* Scheduler Calls - to be called within the coroutines */
   PieceRoutine *GetNewPiece();  /*!< try to get a new piece to run, scheduler may shut caller coroutine down */
-  bool WaitForVHandleVal();  /*!< calls when waiting for a vhandle value and tries to preempt */
-  bool WaitForFutureValue(FutureValue<uint32_t> *future);  /*!< calls when waiting for a future */
   void ExitExecutionRoutine();  /*!< returns the current coroutine and switch back to the main routine to exit */
   void ShutdownAndSwitchTo(CoroStack *coro);  /*!< shutdown myself and switch to a different coroutine */
+  void SwitchTo(CoroStack *coro);  /*!< switch to a selected coroutine that was preempted */
+  void StartNewCoroutine();  /*!< switch to run a brand new coroutine */
 
 };
 

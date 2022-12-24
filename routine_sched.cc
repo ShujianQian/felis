@@ -575,7 +575,7 @@ void EpochExecutionDispatchService::AddBubble()
 
 bool EpochExecutionDispatchService::Preempt(int core_id, BasePieceCollection::ExecutionRoutine *routine_state, uint64_t sid, uint64_t ver)
 {
-  return false; // FIXME: Disable preemption from now
+//  return false; // FIXME: Disable preemption from now
 
   auto &lock = queues[core_id]->lock;
   bool can_preempt = true;
