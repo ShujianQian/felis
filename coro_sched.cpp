@@ -48,12 +48,10 @@ felis::CoroSched::CoroStack *felis::CoroSched::GetCoroStack()
   abort_if(free_corostack_list.empty(), "All CoroStack used up.");
   auto cs = free_corostack_list.front();
   free_corostack_list.pop_front();
-  assert(cs->coroutine.fptr == WorkerFunction);
   return cs;
 }
 void felis::CoroSched::ReturnCoroStack(felis::CoroSched::CoroStack *cs)
 {
-  assert(cs->coroutine.fptr == WorkerFunction);
   free_corostack_list.push_front(cs);
 }
 
@@ -85,7 +83,6 @@ retry_after_periodicIO:
     // CAVEAT: cannot call PeriodicIO before the CallTxnsWorker sets the finished flag
     //         setting the local buffer plan needs to be synchronized before updating buffer plan from other nodes
 
-    assert(free_corostack_list.size() == kMaxNrCoroutine - 1);
     auto cs = (CoroStack *) coro_get_co();
     ExitExecutionRoutine();
     abort();  // unreachable
@@ -242,7 +239,6 @@ void felis::CoroSched::ExitExecutionRoutine()
   auto cs = (CoroStack *) coro_get_co();
   ReturnCoroStack(cs);
   cs_trace("core {} is ExitExecutionRoutine {} from {}", core_id, (void *) coro_get_main_co(), (void *) coro_get_co());
-  assert(cs->coroutine.fptr == WorkerFunction);
   coro_yield_to(coro_get_main_co());
 }
 
@@ -250,7 +246,6 @@ void felis::CoroSched::ShutdownAndSwitchTo(felis::CoroSched::CoroStack *coro) {
   auto cs = (CoroStack *) coro_get_co();
   ReturnCoroStack(cs);
   cs_trace("core {} is ShutdownAndSwitchTo {} from {}", core_id, (void *) coro, (void *) coro_get_co());
-  assert(coro->coroutine.fptr == WorkerFunction);
   coro_yield_to((coroutine *) coro);
 }
 
@@ -260,13 +255,11 @@ void felis::CoroSched::StartNewCoroutine() {
   auto &stack = cs->stack;
   coro_reset_coroutine(&co);
   cs_trace("core {} is StartNewCoroutine {} from {}", core_id, (void *) &co, (void *) coro_get_co());
-  assert(co.fptr == WorkerFunction);
   coro_resume(&co);
 }
 
 void felis::CoroSched::SwitchTo(felis::CoroSched::CoroStack *coro) {
   cs_trace("core {} is SwitchTo {} from {}", core_id, (void *) &coro, (void *) coro_get_co());
-  assert(coro->coroutine.fptr == WorkerFunction);
   coro_yield_to((coroutine *) coro);
 }
 
@@ -284,7 +277,6 @@ felis::CoroSched::CoroSched(uint64_t core_id)
     coro_stack->core_id = core_id;
     coro_stack->coroutine.is_finished = true;
     coro_reuse_coroutine(&coro_stack->coroutine, coro_get_co(), &coro_stack->stack, WorkerFunction, nullptr);
-    assert(coro_stack->coroutine.fptr == WorkerFunction);
     free_corostack_list.push_front(coro_stack);
   }
 }
