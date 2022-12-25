@@ -7,7 +7,7 @@
 
 std::atomic<uint64_t> total_dist_generated = 0;
 uint64_t epoch_nr = 0;
-uint64_t generated_buffer_plan[255][255][255] = {0};
+uint64_t generated_buffer_plan[256][256][256] = {0};
 
 namespace ycsb_dist {
 
