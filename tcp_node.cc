@@ -332,7 +332,7 @@ size_t ReceiverChannel::PollRoutines(PieceRoutine **routines, size_t cnt)
       BaseFutureValue* localFuture = (BaseFutureValue *) util::Instance<EpochManager>().ptr(epoch_nr,node_id,offset);
 
       ((FutureValue<int32_t> *)localFuture)->DecodeFrom(buf+28); //TODO, don't assume type, decode from should be a virtual function
-      localFuture->setReady(); //TODO: can we just use Signal() here?
+      localFuture->SetReady (); //TODO: can we just use Signal() here?
       in->Skip(buflen);
       future_processed++;
 
@@ -517,7 +517,7 @@ void TcpNodeTransport::TransportFutureValue(BaseFutureValue *val)
   for (uint8_t i = 0; i < val->nr_subscribed_nodes(); i++) {
     auto node = val->subscribed_node(i);
     if (node == conf.node_id()) {
-      val->setReady();
+      val->SetReady ();
       continue;
     }
 
@@ -553,7 +553,7 @@ void TcpNodeTransport::TransportDistributedFutureValue(BaseFutureValue *val, int
   for (uint8_t i = 0; i < val->nr_subscribed_nodes(); i++) {
     auto node = val->subscribed_node(i);
     if (node == conf.node_id()) {
-      val->setReady();
+      val->SetReady ();
       continue;
     }
 

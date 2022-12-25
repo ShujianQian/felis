@@ -210,6 +210,12 @@ class CoroutineModule : public Module<CoreModule> {
     if (Options::kUseCoroutineScheduler)
       CoroSched::g_use_coro_sched = true;
 
+    if (Options::kCoroSchedSignalFuture)
+      CoroSched::g_use_signal_future = true;
+
+    if (Options::kOOOBufferSize)
+      CoroSched::g_ooo_buffer_size = Options::kOOOBufferSize.ToInt();
+
     static CoroutineStackAllocator alloc;
     go::InitThreadPool(NodeConfiguration::g_nr_threads + 1, &alloc);
 

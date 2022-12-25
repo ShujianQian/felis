@@ -270,7 +270,7 @@ void BaseFutureValue::Wait()
     auto routine = go::Scheduler::Current()->current_routine();
     bool preempted;
     if (Options::kUseCoroutineScheduler) {
-      preempted = coro_sched->WaitForVHandleVal();
+      preempted = coro_sched->WaitForFutureValue(this);
     } else {
       preempted = ((BasePieceCollection::ExecutionRoutine *) routine)->Preempt(0, 0);
     }

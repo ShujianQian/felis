@@ -12,6 +12,7 @@
 #include "slice.h"
 #include "contention_manager.h"
 #include "opts.h"
+#include "coro_sched.h"
 
 namespace felis {
 
@@ -184,12 +185,14 @@ class BaseTxn {
 
 class BaseFutureValue {
   friend class TcpNodeTransport;
+  friend class CoroSched;
  public:
   static constexpr uint8_t kMaxSubscription = 6;
  protected:
   std::atomic_bool ready = false;
   uint8_t nr_nodes = 0;
   uint8_t nodes[kMaxSubscription];
+  std::atomic<CoroSched::CoroStack *> waiter = nullptr;
  public:
   BaseFutureValue() {}
   BaseFutureValue(const BaseFutureValue &rhs) : ready(rhs.ready.load()) {}
@@ -210,7 +213,24 @@ class BaseFutureValue {
   virtual void DecodeFrom(const uint8_t *buf) {}
   uint8_t nr_subscribed_nodes() const { return nr_nodes; }
   uint8_t subscribed_node(uint8_t idx) const { return nodes[idx]; }
-  void setReady() { ready = true; } //helper to set the ready flag
+  /** helper to set the ready flag */
+  void SetReady ()
+  {
+    ready = true;
+
+    if (Options::kUseCoroutineScheduler) {
+      // if there's someone waiting, try to wake it up
+      CoroSched::CoroStack *curr_waiter = waiter;
+      if (curr_waiter) {
+        if (waiter.compare_exchange_strong(curr_waiter, nullptr)) {
+          // successfully removed the waiter, add to its CoroSched's ready queue
+          CoroSched *waiter_sched = CoroSched::GetCoroSchedForCore(curr_waiter->core_id);
+          waiter_sched->AddToReadyQueue(curr_waiter);
+        }
+        // if someone else removed the waiter, let them deal with it
+      }
+    }
+  }
  protected:
   GenericEpochObject<BaseFutureValue> ConvertToEpochObject() { return EpochObject::Convert(this); }
   GenericEpochObject<BaseFutureValue> ConvertDistributedEpochObject(int origin_node) {

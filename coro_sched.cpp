@@ -7,9 +7,74 @@
 #include "gopp/gopp.h"
 #include "log.h"
 #include "opts.h"
+#include "txn.h"
+
+__thread felis::CoroSched *felis::coro_sched = nullptr;
 
 bool felis::CoroSched::g_use_coro_sched = false;
-__thread felis::CoroSched *felis::coro_sched = nullptr;
+bool felis::CoroSched::g_use_signal_future = false;
+size_t felis::CoroSched::g_ooo_buffer_size = 25;
+
+/** global list of per-core schedulers */
+static felis::CoroSched *coro_scheds[felis::NodeConfiguration::kMaxNrThreads] = {nullptr};
+
+felis::CoroSched::ReadyQueue::ConcurrentBrk::ConcurrentBrk(size_t size) : size{size}
+{
+  base_ptr = (uint8_t *) mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  abort_if(mlock(base_ptr, size) < 0, "Failed to lock ReadyQueue br memory");
+  curr_ptr = base_ptr;
+}
+
+void *felis::CoroSched::ReadyQueue::ConcurrentBrk::Alloc(size_t alloc_size)
+{
+  uint8_t *alloced_ptr = curr_ptr.fetch_add((ptrdiff_t) alloc_size);
+  abort_if(alloced_ptr + alloc_size - base_ptr >= size, "ListNode brk grew out of bound");
+  return (void *) alloced_ptr;
+}
+
+void felis::CoroSched::ReadyQueue::ConcurrentBrk::Reset()
+{
+  curr_ptr = base_ptr;
+}
+
+felis::CoroSched::ReadyQueue::ReadyQueue() : list_node_brk{kListNodeBrkSize}
+{}
+
+void felis::CoroSched::ReadyQueue::Reset()
+{
+  assert(list_head == nullptr);
+  list_node_brk.Reset();
+}
+
+bool felis::CoroSched::ReadyQueue::IsEmpty()
+{
+  return list_head == nullptr;
+}
+
+void felis::CoroSched::ReadyQueue::Add(felis::CoroSched::CoroStack *coro)
+{
+  auto list_node = (ListNode *) list_node_brk.Alloc(sizeof(ListNode));
+  list_node->coro = coro;
+  ListNode *old_head = list_head;
+  do {
+    list_node->next = old_head;
+  } while(!list_head.compare_exchange_strong(old_head, list_node));
+}
+
+felis::CoroSched::CoroStack *felis::CoroSched::ReadyQueue::Pop()
+{
+  ListNode *old_head, *new_head;
+  do {
+    old_head = list_head;
+    if (old_head == nullptr) {
+      // list becomes empty, cannot pop
+      return nullptr;
+    }
+    new_head = old_head->next;
+  } while(!list_head.compare_exchange_strong(old_head, new_head));
+
+  return old_head->coro;
+}
 
 void felis::CoroSched::Init()
 {
@@ -17,9 +82,18 @@ void felis::CoroSched::Init()
   logger->info("Initializing CoroSched on core {}", core_id);
   coro_thread_init(nullptr);
   coro_sched = new CoroSched(core_id);
+  coro_scheds[core_id] = coro_sched;
 }
 
-void felis::CoroSched::StartCoroExec() {
+felis::CoroSched *felis::CoroSched::GetCoroSchedForCore(int core_id)
+{
+  assert(core_id < NodeConfiguration::kMaxNrThreads);
+  assert(coro_scheds[core_id]);
+  return coro_scheds[core_id];
+}
+
+void felis::CoroSched::StartCoroExec()
+{
   // in this new scheduler, only one ExecutionRoutine should run at a time
   abort_if(is_running, "StartCoroExec is called before a previous call returns");
   is_running = true;
@@ -29,6 +103,7 @@ void felis::CoroSched::StartCoroExec() {
   StartNewCoroutine();
 
   // when the main coroutine resume execution, it's time to exit
+  Reset();  // reset myself before exiting
   is_running = false;
 }
 
@@ -96,6 +171,17 @@ retry_after_periodicIO:
     state.running = EpochExecutionDispatchService::State::kRunning;
   }
 
+  // 2. If someone else paused themselves to rum me, return to that coroutine
+  // CAVEAT: this implementation only allows one future wait per piece
+  //         plus, the piece returned from future wait cannot preempt
+  if (paused_coro != nullptr) {
+    CoroStack *to_co = paused_coro;
+    paused_coro = nullptr;
+    cs_trace("core {} found a paused coroutine when getting piece, switch to that", core_id);
+    ShutdownAndSwitchTo(paused_coro);
+    abort();  //unreachable
+  }
+
   // Process the pending buffer of the priority queue
   svc.ProcessPending(q);
 
@@ -104,10 +190,20 @@ retry_after_periodicIO:
     transport.PeriodicIO(core_id);
   }
 
-  // 2. try to run something from the OOO buffer
+waiting_for_detached:
+  // 3. try to run something from the ready queue
+  CoroStack *ready_candidate = ready_queue.Pop();
+  if (ready_candidate != nullptr) {
+    cs_trace("core {} found a ready coroutine in GetNewPiece, shutdown and switch to that", core_id);
+    num_detached_coros--;
+    ShutdownAndSwitchTo(ready_candidate);
+    abort();  // unreachable
+  }
+
+  // 4. try to run something from the OOO buffer
   auto waiting_coro = ooo_buffer[0];
   if (ooo_buffer_len > 0
-      && (ooo_buffer_len == kOOOBufferSize
+      && (ooo_buffer_len == g_ooo_buffer_size
           || (priority_queue.empty() || priority_queue.q[0].key > waiting_coro->preempt_key))) {
     std::pop_heap(ooo_buffer, ooo_buffer + ooo_buffer_len, CoroStack::MinHeapCompare);
     ooo_buffer_len--;
@@ -115,7 +211,7 @@ retry_after_periodicIO:
     abort();  // unreachable
   }
 
-  // 3. try to run something from the priority queue
+  // 5. try to run something from the priority queue
   if (!priority_queue.empty()) {
     auto node = priority_queue.Pick();
     PieceRoutine *routine = node->routine;
@@ -124,7 +220,7 @@ retry_after_periodicIO:
     return routine;
   }
 
-  // 4. nothing to do till now, update the completion counter then
+  // 6. nothing to do till now, update the completion counter then
   auto &local_comp = state.complete_counter;
   auto num_local_completed = local_comp.completed;
   local_comp.completed = 0;
@@ -134,10 +230,15 @@ retry_after_periodicIO:
     global_comp->Complete(num_local_completed);
   }
 
-  // 5. do periodic IO, if there could be anything new, retry everything
+  // 7. do periodic IO, if there could be anything new, retry everything
   bool should_retry_after_periodicIO = transport.PeriodicIO((int) core_id);
   if (should_retry_after_periodicIO) {
     goto retry_after_periodicIO;
+  }
+
+  // 8. If there are detached coroutines left, wait for it
+  if (num_detached_coros > 0) {
+    goto waiting_for_detached;
   }
 
   // there's truely nothing to do, exit ExecutionRoutine
@@ -153,6 +254,9 @@ bool felis::CoroSched::WaitForVHandleVal() {
   auto &state = svc.queues[core_id]->state;
   auto &priority_queue = *static_cast<ConservativePriorityScheduler *>(q.sched_pol);
 
+  // a coroutine cannot preempt when a previous coroutine paused to run you
+  assert(paused_coro == nullptr);
+
   svc.ProcessPending(q);
 
   periodic_counter++;
@@ -166,7 +270,7 @@ bool felis::CoroSched::WaitForVHandleVal() {
     return false;
   }
 
-  abort_if(ooo_buffer_len == kOOOBufferSize, "OOO Window is full");
+  abort_if(ooo_buffer_len == g_ooo_buffer_size, "OOO Window is full");
 
   CoroStack *&wait_state = ooo_buffer[ooo_buffer_len];
   if (wait_state != nullptr) {
@@ -186,7 +290,8 @@ bool felis::CoroSched::WaitForVHandleVal() {
   // if there's nothing else to switch to, do not preempt
   if (ooo_buffer_len == 0  // ooo_buffer is empty
       && (priority_queue.empty() || priority_queue.q[0].key > me.preempt_key)  // no new piece in priority queue
-      && zq.start >= zq.end) {  // zero queue is empty
+      && zq.start >= zq.end  // zero queue is empty
+      && ready_queue.IsEmpty()) {  // ready queue is empty
     return false;
   }
 
@@ -205,10 +310,28 @@ bool felis::CoroSched::WaitForVHandleVal() {
     return true;
   }
 
-  // 2. check whether we should switch to a different waiting coroutine
+  // 2. try to run something from the ready queue
+  CoroStack *ready_candidate = ready_queue.Pop();
+  if (ready_candidate != nullptr) {
+    if (ooo_buffer_len < g_ooo_buffer_size) {
+      // if there is space in the OOO buffer, **preempt** myself to run the ready candidate
+      num_detached_coros--;
+      SwitchTo(ready_candidate);
+      return true;
+    } else {
+      // if the OOO buffer is already full, **pause** myself to run the ready candidate
+      assert(paused_coro == nullptr);
+      num_detached_coros--;
+      paused_coro = &me;
+      SwitchTo(ready_candidate);
+      // switched back from the ready candidate, continue running
+    }
+  }
+
+  // 3. check whether we should switch to a different waiting coroutine
   CoroStack *candidate = ooo_buffer[0];
   if (ooo_buffer_len > 0
-      && (ooo_buffer_len == kOOOBufferSize
+      && (ooo_buffer_len == g_ooo_buffer_size
           || (priority_queue.empty() || priority_queue.q[0].key > candidate->preempt_key))) {
     std::pop_heap(ooo_buffer, ooo_buffer + ooo_buffer_len, CoroStack::MinHeapCompare);
     ooo_buffer_len--;
@@ -220,7 +343,7 @@ bool felis::CoroSched::WaitForVHandleVal() {
     }
   }
 
-  // 3. finally run new PieceRoutines on the priority queue
+  // 4. finally run new PieceRoutines on the priority queue
   if (!priority_queue.empty()) {
     cs_trace("core {} starting a new coroutine to run a priority queue piece", core_id);
     StartNewCoroutine();
@@ -230,8 +353,48 @@ bool felis::CoroSched::WaitForVHandleVal() {
   abort();  // unreachable
 }
 
-bool felis::CoroSched::WaitForFutureValue(FutureValue<uint32_t> *future) {
-  return false;
+bool felis::CoroSched::WaitForFutureValue(BaseFutureValue *future) {
+  if (g_use_signal_future) {
+    return WaitForVHandleVal();
+  }
+
+  assert(future->waiter == nullptr);
+
+  // TODO: Allow multiple waits per piece
+  //    current implementation allows preempting coroutines to pause and run a coroutine that was signaled after
+  //    waiting for future. If the signaled coroutine waits for another future or preempts before getting a new piece
+  //    it will break the paused mechanism.
+  //    A possible solution to the problem is to fall back to preemption when wait for future is called when a coroutine
+  //    was paused. And disallowing a preempting piece to pause and run a signaled coroutine when OOO buffer is full.
+
+  // 1. if future is already available, don't wait
+  if (future->ready) {
+      return true;
+  }
+
+  // 2. attach current coroutine to the future's waiter
+  auto me = (CoroStack *) coro_get_co();
+  future->waiter = me;
+
+  // 3. if between 1. and 3., future is set to ready
+  if (future->ready) {
+    // try to remove myself from the waiter
+    if (future->waiter.compare_exchange_strong(me, nullptr)) {
+      // continue to run if successfully removed myself
+      return true;
+    }
+    // if the notifying thread did this before me, then let that thread wake me up
+  }
+
+  cs_trace("core {} successfully attached to a waited future, starting a new coroutine.", core_id);
+  num_detached_coros++;
+  StartNewCoroutine();
+  return true;
+}
+
+void felis::CoroSched::AddToReadyQueue (felis::CoroSched::CoroStack *coro)
+{
+  ready_queue.Add(coro);
 }
 
 void felis::CoroSched::ExitExecutionRoutine()
@@ -268,9 +431,10 @@ felis::CoroSched::CoroSched(uint64_t core_id)
   core_id{core_id},
   is_running{false},
   svc{dynamic_cast<EpochExecutionDispatchService&>(util::Impl<PromiseRoutineDispatchService>())},
-  transport{util::Impl<PromiseRoutineTransportService>()}
+  transport{util::Impl<PromiseRoutineTransportService>()},
+  ready_queue{}
 {
-  std::fill(ooo_buffer, ooo_buffer + kOOOBufferSize, nullptr);
+  ooo_buffer = (CoroStack **) calloc(g_ooo_buffer_size, sizeof(CoroStack *));
   for (int i = 0; i < kMaxNrCoroutine; i++) {
     auto coro_stack = (CoroStack *) malloc(sizeof(CoroStack));
     coro_allocate_shared_stack(&coro_stack->stack, kCoroutineStackSize, Options::kNoHugePage, true);
@@ -279,6 +443,12 @@ felis::CoroSched::CoroSched(uint64_t core_id)
     coro_reuse_coroutine(&coro_stack->coroutine, coro_get_co(), &coro_stack->stack, WorkerFunction, nullptr);
     free_corostack_list.push_front(coro_stack);
   }
+}
+
+void felis::CoroSched::Reset()
+{
+  assert(paused_coro == nullptr);
+  ready_queue.Reset();
 }
 
 bool felis::CoroSched::CoroStack::MinHeapCompare(felis::CoroSched::CoroStack *a, felis::CoroSched::CoroStack *b) {

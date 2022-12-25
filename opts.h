@@ -96,6 +96,8 @@ struct Options {
   static inline const auto kPWVGraphAlloc = Option("PWVGraphAlloc");
 
   static inline const auto kUseCoroutineScheduler = Option("UseCoroSched", false);
+  static inline const auto kCoroSchedSignalFuture = Option("CoroSchedSignalFuture", false);
+  static inline const auto kOOOBufferSize = Option("OOOBufferSize");
 
   static inline bool ParseExtentedOptions(std::string arg)
   {

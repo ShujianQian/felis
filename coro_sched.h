@@ -10,14 +10,13 @@
 #include "routine_sched.h"
 #include "util/objects.h"
 #include "piece.h"
-#include "txn_cc.h"
 #include "coroutine.h"
 
 namespace felis {
 
 class CoroSched;
 
-extern __thread CoroSched *coro_sched;
+extern __thread CoroSched *coro_sched;  /*!< used to conveniently access this core's scheduler */
 
 class CoroSched {
 public:
@@ -31,33 +30,76 @@ public:
     static bool MinHeapCompare(CoroStack *a,  CoroStack *b);  /*!< compare function to build heap */
   };
 
-  static constexpr size_t kMaxNrCoroutine = 1000;  /*!< number of coroutines allocated at initialization */
-  static constexpr size_t kCoroutineStackSize = 65536;  /*!< min size of the coroutines' stack */
-  static constexpr size_t kOOOBufferSize = 100;  /*!< size of the out of order execution window */
+private:
+  /** concurrent linked list to store detached coroutines that turned ready */
+  struct ReadyQueue {
+    struct ListNode {
+      CoroStack *coro;  /*!< pointer to the detached coroutine itself */
+      ListNode *next;
+    };
+
+    /** brk style memory pre-allocated for ListNode, simplifies ListNode allocation and eliminates the ABA problem */
+    struct ConcurrentBrk {
+      uint8_t *base_ptr;
+      size_t size;
+      std::atomic<uint8_t *> curr_ptr;  /*!< current top of the brk */
+
+      ConcurrentBrk() = delete;
+      explicit ConcurrentBrk(size_t size);  /*!< allocates memory of given size and lock in memory */
+      void *Alloc(size_t alloc_size);
+      void Reset();  /*!< resets the top pointer of the brk */
+    };
+
+    static constexpr size_t kListNodeBrkSize = 16 * 1024 * 1024;  /*!< size of the brk to pre-allocate 16MB */
+
+    std::atomic<ListNode *> list_head = nullptr;
+    ConcurrentBrk list_node_brk;
+
+    ReadyQueue();
+    void Reset();
+    bool IsEmpty();
+    void Add(CoroStack *coro);  /*!< atomically add coroutine the ready queue */
+    CoroStack *Pop();  /*!< atomically pops the ready queue */
+  };
+
+public:
+  /* Settings */
+  static bool g_use_coro_sched;  /*!< if set use the coroutine scheduler instead of the normal ExecutionRoutine one */
+  static bool g_use_signal_future;  /*!< if set use signal mechanism for future waits */
+  static size_t g_ooo_buffer_size;  /*!< size of the out of order execution window */
+
+private:
+  static constexpr size_t kMaxNrCoroutine = 10000;  /*!< number of coroutines allocated at initialization */
+  static constexpr size_t kCoroutineStackSize = 64 * 1024;  /*!< min size of the coroutines' stack */
   static constexpr uint64_t kPreemptKeyThreshold = 17000;  /*!< backoff step for preempted pieces */
   static constexpr uint64_t kMaxBackoff = 40;  /*!< max number of backoff steps for preempted pieces */
   static constexpr uint64_t kPeriodicIOInterval = 0x3F;  /*!< PeriodicIO event trigger interval */
-  static bool g_use_coro_sched;  /*!< if set use the coroutine scheduler instead of the normal ExecutionRoutine one */
 
   uint64_t core_id;  /*!< id of the core where this scheduler belongs to */
-  std::atomic<uint16_t> tag;  /*!< used to reduce the chance of the ABA problem */
   bool is_running;  /*!< used to check whether StartCoroExec has overlapping calls */
   std::list<CoroStack *> free_corostack_list;  /*!< list of pre-allocated but unused coroutines */
-  CoroStack *ooo_buffer[kOOOBufferSize];  /*!< out of order buffer, kept as a min heap */
+  CoroStack **ooo_buffer;  /*!< out of order buffer, kept as a min heap */
   size_t ooo_buffer_len = 0;  /*!< number of ooo_buffer entry used */
+  CoroStack *paused_coro = nullptr;  /*!< if set, means a coroutine paused itself to execute a ready queue piece */
   EpochExecutionDispatchService &svc;  /*!< reference to the dispatch service where we get our new routines */
                                        /*!< **Caution**: this only works with the EpochExecutionDispatchService */
   PromiseRoutineTransportService &transport;  /*!< reference to the transport service where we do periodic IOs */
   uint64_t periodic_counter = 0;  /*!< counter for triggering periodic events */
+  ReadyQueue ready_queue;  /*!< list of detached coroutines that became ready using the signal mechanism */
+  uint64_t num_detached_coros = 0;  /*!< keeps track of number of detached coroutines */
+
+public:
+  static void Init();  /*!< Initializes CoroSched on a core. Must be called once before executing */
+  static CoroSched *GetCoroSchedForCore(int core_id);  /*!< get a core's responsible coro_sched */
 
   CoroSched() = delete;
   explicit CoroSched(uint64_t core_id);  /*!< Pre-allocates the coroutines */
 
-  static void Init();  /*!< Initializes CoroSched on a core. Must be called once before executing */
+  /* Scheduler Calls */
   void StartCoroExec();  /*!< The entry point of the Coroutine Scheduler. To be called by the ExecutionRoutine */
-
   bool WaitForVHandleVal();  /*!< calls when waiting for a vhandle value and tries to preempt */
-  bool WaitForFutureValue(FutureValue<uint32_t> *future);  /*!< calls when waiting for a future */
+  bool WaitForFutureValue(BaseFutureValue *future);  /*!< calls when waiting for a future */
+  void AddToReadyQueue(CoroStack *coro);  /*!< adds a coroutine previously attached somewhere else back */
 
 private:
   static void WorkerFunction();  /*!< worker function executed by the coroutines */
@@ -65,6 +107,7 @@ private:
   /* Utility Functions */
   CoroStack *GetCoroStack();  /*!< util to get a free coroutine from the free list */
   void ReturnCoroStack(CoroStack *cs);  /*!< util to return a coroutine to the free list */
+  void Reset();  /*!< resets the coroutine scheduler before exiting */
 
   /* Scheduler Calls - to be called within the coroutines */
   PieceRoutine *GetNewPiece();  /*!< try to get a new piece to run, scheduler may shut caller coroutine down */
