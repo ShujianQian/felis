@@ -5,9 +5,19 @@
 #include "coroutine.h"
 
 #include <string.h>
-#include <assert.h>
 #include <unistd.h>
+#include <stdio.h>
 #include <sys/mman.h>
+
+#define is_empty(...) (sizeof((char[]){#__VA_ARGS__}) == 1)
+
+#define abort_if_c(cond, ...)            \
+  if (__builtin_expect(!!(cond), 0)) {   \
+    if (!is_empty(__VA_ARGS__)) {        \
+      fprintf(stderr, ""__VA_ARGS__);    \
+      fflush(stderr);                    \
+    }                                    \
+  }
 
 void coro_default_exception_func(void);
 
@@ -43,7 +53,7 @@ struct coroutine *coro_create(struct coroutine *main_co,
 
 	if (main_co != NULL) {
 		// this is a non-main coroutine
-		assert(shared_stack != NULL);
+		abort_if_c(shared_stack != NULL);
 		co->shared_stack = shared_stack;
 		co->reg[CORO_RET_ADDR_IDX] = (void *)coro_func;
 		co->reg[CORO_SP_IDX] = co->shared_stack->aligned_ret_ptr;
@@ -67,9 +77,9 @@ void coro_reuse_coroutine(struct coroutine *coro, struct coroutine *main_co,
 			  struct coro_shared_stack *shared_stack,
 			  coro_func_t coro_func, void *args)
 {
-	assert(main_co != NULL);
-	assert(coro->is_finished);
-	assert(shared_stack != NULL);
+	abort_if_c(main_co != NULL);
+	abort_if_c(coro->is_finished);
+	abort_if_c(shared_stack != NULL);
 	coro->main_co = main_co;
 	coro->args = args;
 	coro->is_finished = false;
@@ -81,10 +91,10 @@ void coro_reuse_coroutine(struct coroutine *coro, struct coroutine *main_co,
 
 void coro_reset_coroutine(struct coroutine *coro)
 {
-  assert(coro != NULL);
-  assert(coro->shared_stack != NULL);
-  assert(coro->shared_stack->aligned_ret_ptr != NULL);
-  assert(coro->fptr != NULL);
+  abort_if_c(coro != NULL);
+  abort_if_c(coro->shared_stack != NULL);
+  abort_if_c(coro->shared_stack->aligned_ret_ptr != NULL);
+  abort_if_c(coro->fptr != NULL);
   coro->reg[0] = 0;
   coro->reg[1] = 0;
   coro->reg[2] = 0;
@@ -113,17 +123,17 @@ void coro_allocate_shared_stack(struct coro_shared_stack *stack, size_t size, bo
     size = 1 << 22;
   if (size < 4096)
     size = 4096;
-  assert(size >= 4096);
+  abort_if_c(size >= 4096);
 
   size_t page_size = 0;
   if (enable_guard_page) {
     long signed_page_size = sysconf(_SC_PAGESIZE);
-    assert(signed_page_size > 0);
-    assert(((signed_page_size - 1) & signed_page_size) == 0);
+    abort_if_c(signed_page_size > 0);
+    abort_if_c(((signed_page_size - 1) & signed_page_size) == 0);
     page_size = (size_t)((unsigned long)signed_page_size);
-    assert(page_size == (unsigned long)page_size);
+    abort_if_c(page_size == (unsigned long)page_size);
     // check overflow
-    assert((page_size << 1) >> 1 == page_size);
+    abort_if_c((page_size << 1) >> 1 == page_size);
 
     if (size < page_size) {
       size = page_size * 2;
@@ -132,21 +142,18 @@ void coro_allocate_shared_stack(struct coro_shared_stack *stack, size_t size, bo
       if ((size & (page_size - 1)) != 0) {
         // align sstack size to multiple of pagesize
         aligned_size = (size & (~(page_size - 1)));
-        assert(aligned_size + page_size * 2 >
-            aligned_size);
+        abort_if_c(aligned_size + page_size * 2 > aligned_size);
         aligned_size += page_size * 2;
-        assert(aligned_size / page_size ==
-            size / page_size + 2);
+        abort_if_c(aligned_size / page_size == size / page_size + 2);
       } else {
         aligned_size = size;
-        assert(aligned_size + page_size > aligned_size);
+        abort_if_c(aligned_size + page_size > aligned_size);
         aligned_size += page_size; // protection page
-        assert(aligned_size / page_size ==
-            size / page_size + 1);
+        abort_if_c(aligned_size / page_size == size / page_size + 1);
       }
       size = aligned_size;
-      assert(size / page_size > 1);
-      assert((size & (page_size - 1)) == 0);
+      abort_if_c(size / page_size > 1);
+      abort_if_c((size & (page_size - 1)) == 0);
     }
   }
 
@@ -155,16 +162,21 @@ void coro_allocate_shared_stack(struct coro_shared_stack *stack, size_t size, bo
     stack->real_ptr = mmap(NULL, size, PROT_READ | PROT_WRITE,
                             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     // create a read-only guard page at the end
-    assert(mprotect(stack->real_ptr, page_size, PROT_READ) == 0);
+    abort_if_c(stack->real_ptr);
+    abort_if_c(mprotect(stack->real_ptr, page_size, PROT_READ) == 0);
     stack->real_size = size;
-    stack->ptr =
-        (void *)(((uintptr_t)stack->real_ptr) + page_size);
+    stack->ptr = (void *)(((uintptr_t)stack->real_ptr) + page_size);
     stack->size = size - page_size;
-    assert(mlock(stack->real_ptr, stack->real_size) == 0);
+    if (lock) {
+      abort_if_c(mlock(stack->real_ptr, stack->real_size) < 0, "Failed to lock coroutine stack in memory");
+    }
   } else {
     stack->size = size;
     stack->ptr = malloc(size);
-    assert(mlock(stack->real_ptr, stack->real_size) == 0);
+    abort_if_c(stack->ptr);
+    if (lock) {
+      abort_if_c(mlock(stack->ptr, stack->size) < 0, "Failed to lock coroutine stack in memory");
+    }
   }
 
   stack->owner = NULL;
@@ -181,8 +193,8 @@ void coro_allocate_shared_stack(struct coro_shared_stack *stack, size_t size, bo
 
 void coro_destroy_shared_stack(struct coro_shared_stack *sstack)
 {
-	assert(sstack != NULL);
-	assert(sstack->ptr != NULL);
+	abort_if_c(sstack != NULL);
+	abort_if_c(sstack->ptr != NULL);
 	if (sstack->guard_page_enabled) {
 		munmap(sstack->real_ptr, sstack->real_size);
 		sstack->real_ptr = NULL;
@@ -196,7 +208,9 @@ void coro_destroy_shared_stack(struct coro_shared_stack *sstack)
 
 void coro_default_exception_func()
 {
-	return;
+  fprintf(stderr, "A coroutine illegally called return.");
+  fflush(stderr);
+  abort();
 }
 
 void coro_resume(struct coroutine *to_co)
