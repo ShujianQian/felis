@@ -14,6 +14,10 @@
 namespace felis {
 namespace tcp {
 
+static constexpr size_t kTcpBufferSize = 1 * 1024 * 1024;
+static __thread uint8_t send_channel_buffer[kTcpBufferSize];
+static __thread uint8_t recv_channel_buffer[kTcpBufferSize];
+
 class SendChannel : public Flushable<SendChannel>, public OutgoingTraffic {
   go::TcpOutputChannel *out;
   go::BufferChannel *flusher_channel;
@@ -123,7 +127,7 @@ bool SendChannel::PushRelease(int tid, unsigned int start, unsigned int end)
   
   auto mem = channels[tid].mem;
   if (end - start > 0) {
-    void *buf = alloca(end - start);
+    void *buf = send_channel_buffer;
     memcpy(buf, mem + start, end - start);
     channels[tid].dirty.store(true, std::memory_order_release);
     Unlock(tid);
@@ -301,7 +305,7 @@ size_t ReceiverChannel::PollRoutines(PieceRoutine **routines, size_t cnt)
       auto nr_nodes = conf.nr_nodes();
       auto buffer_size = 8 + max_level * nr_nodes * nr_nodes * sizeof(ulong);
       auto buflen = 8 + buffer_size;
-      auto buf = (uint8_t *) alloca(buflen);
+      auto buf = recv_channel_buffer;
 
       if (in->Peek(buf, buflen) < buflen) {
         break;
@@ -317,7 +321,7 @@ size_t ReceiverChannel::PollRoutines(PieceRoutine **routines, size_t cnt)
       
       header -= ((uint64_t)1<<55);
       auto buflen = 8 + header;
-      auto buf = (uint8_t *) alloca(buflen);
+      auto buf = recv_channel_buffer;
       if (in->Peek(buf, buflen) < buflen) {
         break;
       }
@@ -344,7 +348,7 @@ size_t ReceiverChannel::PollRoutines(PieceRoutine **routines, size_t cnt)
     } else {
       abort_if(header % 8 != 0, "header isn't aligned {}", header);
       auto buflen = 8 + header;
-      auto buf = (uint8_t *) alloca(buflen);
+      auto buf = recv_channel_buffer;
       if (in->Peek(buf, buflen) < buflen)
         break;
       routines[i++] = PieceRoutine::CreateFromPacket(buf + 8, header);
@@ -369,7 +373,7 @@ bool ReceiverChannel::PollMappingTable()
   unsigned int nr_ops = header & std::numeric_limits<int32_t>::max();
   auto len = 4 + 4 * nr_ops;
   auto buflen = 8 + len;
-  auto buf = (uint8_t *) alloca(buflen);
+  auto buf = recv_channel_buffer;
   abort_if(buflen > kMaxMappingTableBuffer,
            "MappingTable request is {}, larger than maximum {}",
            buflen, kMaxMappingTableBuffer);
