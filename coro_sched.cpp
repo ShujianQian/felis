@@ -220,6 +220,7 @@ waiting_for_detached:
     priority_queue.Consume(node);
     CoroStack &me = *((CoroStack *) coro_get_co());
     me.sched_key = routine->sched_key;
+    me.preempt_times = 0;
     me.running_piece = routine;
     return routine;
   }
@@ -276,20 +277,10 @@ bool felis::CoroSched::WaitForVHandleVal() {
 
   abort_if(ooo_buffer_len == g_ooo_buffer_size, "OOO Window is full");
 
-  CoroStack *&wait_state = ooo_buffer[ooo_buffer_len];
-  if (wait_state == &me) {
-    // if I was the previously picked coroutine from OOO buffer
-    me.preempt_times++;
-  } else {
-    // if it's my first time to be preempted
-    wait_state = &me;
-    me.preempt_times = 1;
-    q.waiting.unique_preempts++;
-  }
-
-  me.preempt_key = me.sched_key + kPreemptKeyThreshold * std::min(me.preempt_times, kMaxBackoff);
-
   // add myself to the ooo buffer
+  ooo_buffer[ooo_buffer_len] = &me;
+  me.preempt_times++;
+  me.preempt_key = me.sched_key + kPreemptKeyThreshold * std::min(me.preempt_times, kMaxBackoff);
   ooo_buffer_len++;
   std::push_heap(ooo_buffer, ooo_buffer + ooo_buffer_len, CoroStack::MinHeapCompare);
   CoroStack *candidate = ooo_buffer[0];
