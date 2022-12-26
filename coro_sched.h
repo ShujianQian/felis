@@ -27,6 +27,7 @@ public:
     uint64_t sched_key;  /*!< the scheduling key of the waiting coroutine */
     uint64_t preempt_key;  /*!< the sched key with backoff of the waiting coroutine */
     uint64_t preempt_times;  /*!< number of preempt called, used to calculated linear backoff */
+    PieceRoutine *running_piece;
     static bool MinHeapCompare(CoroStack *a,  CoroStack *b);  /*!< compare function to build heap */
   };
 

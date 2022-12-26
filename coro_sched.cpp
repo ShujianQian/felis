@@ -147,7 +147,9 @@ retry_after_periodicIO:
     state.running = EpochExecutionDispatchService::State::kRunning;
     PieceRoutine *routine = zq.q[zstart];
     zq.start = zstart + 1;
-    ((CoroStack *) coro_get_co())->sched_key = routine->sched_key;
+    CoroStack &me = *((CoroStack *) coro_get_co());
+    me.sched_key = routine->sched_key;
+    me.running_piece = routine;
     return routine;
   }
 
@@ -216,7 +218,9 @@ waiting_for_detached:
     auto node = priority_queue.Pick();
     PieceRoutine *routine = node->routine;
     priority_queue.Consume(node);
-    ((CoroStack *) coro_get_co())->sched_key = routine->sched_key;
+    CoroStack &me = *((CoroStack *) coro_get_co());
+    me.sched_key = routine->sched_key;
+    me.running_piece = routine;
     return routine;
   }
 
@@ -327,7 +331,30 @@ bool felis::CoroSched::WaitForVHandleVal() {
     }
   }
 
-  // 3. check whether we should switch to a different waiting coroutine
+  // 3. resolve deadlock
+  if (ooo_buffer_len == g_ooo_buffer_size  // ooo_buffer is full
+      && candidate->preempt_times > kMaxBackoff  // has preempted max backoff times
+      && (candidate->sched_key > priority_queue.q[0].key  // the top of priority queue has smaller sched_key
+          || (candidate->sched_key == priority_queue.q[0].key  // the top of priority queue has the same sched_key
+              && candidate->running_piece->fv_signals > 0))) {  // but the waiting piece is a receiving piece
+    // re-queue transactions that has larger sched_key than the top of the priority queue
+    size_t new_ooo_buffer_size = 0;
+    for (size_t i = 0; i < ooo_buffer_len; i++) {
+      CoroStack *coro_to_reject = ooo_buffer[i];
+      if (coro_to_reject->sched_key >= priority_queue.q[0].key) {
+        svc.AddToPriorityQueue(q, coro_to_reject->running_piece);
+        ReturnCoroStack(coro_to_reject);
+      } else {
+        ooo_buffer[new_ooo_buffer_size] = coro_to_reject;
+        new_ooo_buffer_size++;
+      }
+    }
+    cs_trace("core {} re-queued {} routines", core_id, ooo_buffer_len - new_ooo_buffer_size);
+    ooo_buffer_len = new_ooo_buffer_size;
+    std::make_heap(ooo_buffer, ooo_buffer + ooo_buffer_len);
+  }
+
+  // 4. check whether we should switch to a different waiting coroutine
   if (ooo_buffer_len > 0
       && (ooo_buffer_len == g_ooo_buffer_size
           || (priority_queue.empty() || priority_queue.q[0].key > candidate->preempt_key))) {
@@ -341,7 +368,7 @@ bool felis::CoroSched::WaitForVHandleVal() {
     }
   }
 
-  // 4. finally run new PieceRoutines on the priority queue
+  // 5. finally run new PieceRoutines on the priority queue
   if (!priority_queue.empty()) {
     cs_trace("core {} starting a new coroutine to run a priority queue piece", core_id);
     StartNewCoroutine();
@@ -450,7 +477,12 @@ void felis::CoroSched::Reset()
 }
 
 bool felis::CoroSched::CoroStack::MinHeapCompare(felis::CoroSched::CoroStack *a, felis::CoroSched::CoroStack *b) {
+  // 1. compares the preempt key
   if (a->preempt_key > b->preempt_key) return true;
   if (a->preempt_key < b->preempt_key) return false;
-  return a->sched_key > b->sched_key;
+  // 2. breaks the tie with sched key
+  if (a->sched_key > b->sched_key) return true;
+  if (a->sched_key < b->sched_key) return false;
+  // 3. if the sched keys are also the same, pieces that are receiving futures should be scheduled after senders
+  return a->running_piece->fv_signals > 0;
 }
