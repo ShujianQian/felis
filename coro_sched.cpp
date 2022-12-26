@@ -273,31 +273,30 @@ bool felis::CoroSched::WaitForVHandleVal() {
   abort_if(ooo_buffer_len == g_ooo_buffer_size, "OOO Window is full");
 
   CoroStack *&wait_state = ooo_buffer[ooo_buffer_len];
-  if (wait_state != nullptr) {
-    if (wait_state->sched_key == me.sched_key) {
-      me.preempt_times++;
-    } else {
-      wait_state->preempt_times = 1;
-      q.waiting.unique_preempts++;
-    }
+  if (wait_state == &me) {
+    // if I was the previously picked coroutine from OOO buffer
+    me.preempt_times++;
   } else {
+    // if it's my first time to be preempted
+    wait_state = &me;
     me.preempt_times = 1;
+    q.waiting.unique_preempts++;
   }
 
-  wait_state = &me;
   me.preempt_key = me.sched_key + kPreemptKeyThreshold * std::min(me.preempt_times, kMaxBackoff);
-
-  // if there's nothing else to switch to, do not preempt
-  if (ooo_buffer_len == 0  // ooo_buffer is empty
-      && (priority_queue.empty() || priority_queue.q[0].key > me.preempt_key)  // no new piece in priority queue
-      && zq.start >= zq.end  // zero queue is empty
-      && ready_queue.IsEmpty()) {  // ready queue is empty
-    return false;
-  }
 
   // add myself to the ooo buffer
   ooo_buffer_len++;
   std::push_heap(ooo_buffer, ooo_buffer + ooo_buffer_len, CoroStack::MinHeapCompare);
+  CoroStack *candidate = ooo_buffer[0];
+
+  // if there's nothing else to switch to, do not preempt
+  if (ooo_buffer_len == 0  // ooo_buffer is empty
+      && (priority_queue.empty() || priority_queue.q[0].key > candidate->preempt_key)  // no new piece in priority queue
+      && zq.start >= zq.end  // zero queue is empty
+      && ready_queue.IsEmpty()) {  // ready queue is empty
+    return false;
+  }
 
   // now find what to execute next
 
@@ -329,7 +328,6 @@ bool felis::CoroSched::WaitForVHandleVal() {
   }
 
   // 3. check whether we should switch to a different waiting coroutine
-  CoroStack *candidate = ooo_buffer[0];
   if (ooo_buffer_len > 0
       && (ooo_buffer_len == g_ooo_buffer_size
           || (priority_queue.empty() || priority_queue.q[0].key > candidate->preempt_key))) {
@@ -354,7 +352,7 @@ bool felis::CoroSched::WaitForVHandleVal() {
 }
 
 bool felis::CoroSched::WaitForFutureValue(BaseFutureValue *future) {
-  if (g_use_signal_future) {
+  if (!g_use_signal_future) {
     return WaitForVHandleVal();
   }
 
