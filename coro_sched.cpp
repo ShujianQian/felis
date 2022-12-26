@@ -476,6 +476,32 @@ void felis::CoroSched::Reset()
   ready_queue.Reset();
 }
 
+void felis::CoroSched::DumpStatus(bool halt)
+{
+  auto &q = svc.queues[core_id]->pq;
+  auto &priority_queue = *static_cast<ConservativePriorityScheduler *>(q.sched_pol);
+  fmt::memory_buffer buf;
+  fmt::format_to(buf, "Dumping state of CoroSched on core {}\n", core_id);
+  fmt::format_to(buf, "num_detached_coros = {}\n", num_detached_coros);
+  fmt::format_to(buf, "ooo_buffer_len = {}\n", ooo_buffer_len);
+  fmt::format_to(buf, "top of priority queue: sched_key = {}\n", priority_queue.q[0].key);
+  if (ooo_buffer_len > 0) {
+    fmt::format_to(buf, "Dumping ooo_buffer\n");
+  }
+  for (size_t i = 0; i < ooo_buffer_len; i++) {
+    CoroStack &co = *ooo_buffer[i];
+    fmt::format_to(buf, "[{}] sched_key = {}, preempt_times = {}, preempt_key = {}\n",
+                   i, co.sched_key, co.preempt_times, co.preempt_key);
+  }
+  if (halt) {
+    fmt::format_to(buf, "halting...");
+  }
+  logger->info(to_string(buf));
+  if (halt) {
+    sleep(600);
+  }
+}
+
 bool felis::CoroSched::CoroStack::MinHeapCompare(felis::CoroSched::CoroStack *a, felis::CoroSched::CoroStack *b) {
   // 1. compares the preempt key
   if (a->preempt_key > b->preempt_key) return true;

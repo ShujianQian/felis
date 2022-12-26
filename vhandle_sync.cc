@@ -134,7 +134,10 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uin
   while (!slot(core_id)->done.load(std::memory_order_acquire)) {
     wait_cnt++;
 
-    if (unlikely((wait_cnt & 0x7FFFFFF) == 0)) {
+    if (unlikely((wait_cnt & 0x7FFFFF) == 0)) {
+      if (CoroSched::g_use_coro_sched) {
+        coro_sched->DumpStatus();
+      }
       int dep = dispatch.TraceDependency(ver);
       logger->error("Deadlock on core {}? {} (using {}) waiting for {} ({}) node ({}), ptr {}",
                     core_id, sid, (void *) routine, ver, dep, ver & 0xFF, (void *)ptr);
@@ -205,7 +208,10 @@ void SimpleSync::WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ve
 
   while (IsPendingVal(*addr)) {
     wait_cnt++;
-    if (unlikely((wait_cnt & 0x7FFFFFF) == 0)) {
+    if (unlikely((wait_cnt & 0x7FFFFF) == 0)) {
+      if (CoroSched::g_use_coro_sched) {
+        coro_sched->DumpStatus();
+      }
       int dep = dispatch.TraceDependency(ver);
       printf("Deadlock on core %d? %lu (using %p) waiting for %lu (%d) node (%lu)\n",
              core_id, sid, routine, ver, dep, ver & 0xFF);

@@ -102,6 +102,9 @@ public:
   bool WaitForFutureValue(BaseFutureValue *future);  /*!< calls when waiting for a future */
   void AddToReadyQueue(CoroStack *coro);  /*!< adds a coroutine previously attached somewhere else back */
 
+  /* Debug */
+  void DumpStatus(bool halt = true);
+
 private:
   static void WorkerFunction();  /*!< worker function executed by the coroutines */
 
