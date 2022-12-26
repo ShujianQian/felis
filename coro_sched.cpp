@@ -476,6 +476,9 @@ void felis::CoroSched::DumpStatus(bool halt)
   fmt::format_to(buf, "num_detached_coros = {}\n", num_detached_coros);
   fmt::format_to(buf, "ooo_buffer_len = {}\n", ooo_buffer_len);
   fmt::format_to(buf, "top of priority queue: sched_key = {}\n", priority_queue.q[0].key);
+  CoroStack &last_preempted_co = *ooo_buffer[ooo_buffer_len];
+  fmt::format_to(buf, "last preempted: sched_key = {}, preempt_times = {}, preempt_key = {}\n",
+                 last_preempted_co.sched_key, last_preempted_co.preempt_times, last_preempted_co.preempt_key);
   if (ooo_buffer_len > 0) {
     fmt::format_to(buf, "Dumping ooo_buffer\n");
   }
