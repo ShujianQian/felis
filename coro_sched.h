@@ -68,12 +68,12 @@ public:
   static bool g_use_coro_sched;  /*!< if set use the coroutine scheduler instead of the normal ExecutionRoutine one */
   static bool g_use_signal_future;  /*!< if set use signal mechanism for future waits */
   static size_t g_ooo_buffer_size;  /*!< size of the out of order execution window */
+  static uint64_t g_preempt_step; /*!< backoff step for preempted pieces */
+  static uint64_t g_max_backoff;  /*!< max number of backoff steps for preempted pieces */
 
 private:
   static constexpr size_t kMaxNrCoroutine = 40000;  /*!< number of coroutines allocated at initialization */
   static constexpr size_t kCoroutineStackSize = 32 * 1024;  /*!< min size of the coroutines' stack */
-  static constexpr uint64_t kPreemptKeyThreshold = 17000;  /*!< backoff step for preempted pieces */
-  static constexpr uint64_t kMaxBackoff = UINT64_MAX;  /*!< max number of backoff steps for preempted pieces */
   static constexpr uint64_t kPeriodicIOInterval = 0x3F;  /*!< PeriodicIO event trigger interval */
 
   uint64_t core_id;  /*!< id of the core where this scheduler belongs to */

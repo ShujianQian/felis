@@ -43,6 +43,9 @@ struct Option {
   int ToInt(const char *def = nullptr) const {
     return std::stoi(Get(def));
   }
+  unsigned long long ToULL(const char *def = nullptr) const {
+    return std::strtoull(Get(def).c_str(), nullptr, 0);
+  }
   long long ToLargeNumber(const char *def = nullptr) const {
     return ParseLargeNumber(Get(def));
   }
@@ -98,6 +101,8 @@ struct Options {
   static inline const auto kUseCoroutineScheduler = Option("UseCoroSched", false);
   static inline const auto kCoroSchedSignalFuture = Option("CoroSchedSignalFuture", false);
   static inline const auto kOOOBufferSize = Option("OOOBufferSize");
+  static inline const auto kPreemptStep = Option("PreemptStep");
+  static inline const auto kMaxBackoff = Option("MaxBackoff");
 
   static inline bool ParseExtentedOptions(std::string arg)
   {

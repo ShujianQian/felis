@@ -216,6 +216,12 @@ class CoroutineModule : public Module<CoreModule> {
     if (Options::kOOOBufferSize)
       CoroSched::g_ooo_buffer_size = Options::kOOOBufferSize.ToInt();
 
+    if (Options::kPreemptStep)
+      CoroSched::g_preempt_step = Options::kPreemptStep.ToULL();
+
+    if (Options::kMaxBackoff)
+      CoroSched::g_max_backoff = Options::kMaxBackoff.ToULL();
+
     static CoroutineStackAllocator alloc;
     go::InitThreadPool(NodeConfiguration::g_nr_threads + 1, &alloc);
 
