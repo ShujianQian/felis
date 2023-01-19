@@ -101,6 +101,18 @@ struct TpccDelivery {
   void operator()() const;
 };
 
+struct NumPreempt {
+  uint64_t num_preempt;
+  uint64_t sid;
+  void operator()() const;
+};
+
+struct WaitTime {
+  uint64_t wait_time;
+  uint64_t sid;
+  void operator()() const;
+};
+
 }
 }
 
@@ -118,6 +130,8 @@ struct TpccDelivery {
   PROBE_PROXY(felis::probes::EndOfPhase);                                      \
   PROBE_PROXY(felis::probes::TpccNewOrder);                                    \
   PROBE_PROXY(felis::probes::TpccPayment);                                     \
-  PROBE_PROXY(felis::probes::TpccDelivery);
+  PROBE_PROXY(felis::probes::TpccDelivery);                                    \
+  PROBE_PROXY(felis::probes::WaitTime);                                        \
+  PROBE_PROXY(felis::probes::NumPreempt);
 
 #endif /* FELIS_PROBES_H */

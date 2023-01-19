@@ -107,6 +107,7 @@ struct Histogram {
   Histogram &operator<<(long value) {
     long idx = (value - Offset) / Bucket;
     if (idx >= 0 && idx < N) hist[idx]++;
+    if (idx >= N) hist[N-1]++;
     return *this;
   }
   Histogram &operator<<(const Histogram &rhs) {
@@ -142,27 +143,27 @@ std::ostream &operator<<(std::ostream &out, const Histogram<N, Offset, Bucket>& 
     if (unit < h.hist[i] / 100) unit = h.hist[i] / 100;
 
   for (int i = 0; i < N; i++) {
-    if (last != h.hist[i]) {
-      long start = i * Bucket + Offset;
+    long start = i * Bucket + Offset;
+    if (i == N - 1) {
+      out << std::setw(10) << " "
+          << ">= "
+          << std::setw(10) << start
+          << ": "
+          << std::setw(10) << h.hist[i] << " ";
+    } else {
       out << std::setw(10) << start
           << " - "
           << std::setw(10) << start + Bucket
           << ": "
           << std::setw(10) << h.hist[i] << " ";
-      if (unit > 0)
-        for (int j = 0; j < h.hist[i] / unit; j++)
-          out << '@';
-
-      out << std::endl;
-
-      last = h.hist[i];
-      repeat = false;
-    } else {
-      if (!repeat) {
-        out << "..." << std::endl;
-        repeat = true;
-      }
     }
+    if (unit > 0)
+      for (int j = 0; j < h.hist[i] / unit; j++)
+        out << '@';
+
+    out << std::endl;
+
+    last = h.hist[i];
   }
   return out;
 }
@@ -171,16 +172,22 @@ template <int N = 10, int Offset = 0, int Base = 2>
 struct LogHistogram {
   static constexpr int kNrBins = N;
   long hist[N];
+  long cnt;
   LogHistogram() {
     memset(hist, 0, sizeof(long) * N);
+    cnt = 0;
   }
   LogHistogram &operator<<(long value) {
+    cnt++;
+    if (value <= 0) return *this;
     long idx = std::log2(value) / std::log2(Base) - Offset;
     if (idx >= 0 && idx < N) hist[idx]++;
+    if (idx >= N) hist[N - 1]++;
     return *this;
   }
   LogHistogram &operator<<(const LogHistogram &rhs) {
     for (int i = 0; i < N; i++) hist[i] += rhs.hist[i];
+    cnt += rhs.cnt;
     return *this;
   }
 };
@@ -194,16 +201,106 @@ std::ostream &operator<<(std::ostream &out, const LogHistogram<N, Offset, Base> 
   long start = long(std::pow(Base, Offset));
   for (int i = 0; i < N; i++) {
     long end = start * Base;
-    out << std::setw(10) << start
-        << " - "
-        << std::setw(10) << end
-        << ": "
-        << std::setw(10) << h.hist[i] << " ";
+    if (i == N - 1) {
+      out << std::setw(10) << " "
+          << ">= "
+          << std::setw(10) << start
+          << ": "
+          << std::setw(10) << h.hist[i] << " ";
+    } else {
+      out << std::setw(10) << start
+          << " - "
+          << std::setw(10) << end
+          << ": "
+          << std::setw(10) << h.hist[i] << " ";
+    }
     if (unit > 0)
       for (int j = 0; j < h.hist[i] / unit; j++)
         out << '@';
     out << std::endl;
     start = end;
+  }
+  return out;
+}
+
+struct TimeValue {
+  uint64_t epoch;
+  uint64_t time;
+  uint64_t val;
+};
+
+template <int NumEpoch = 20, int BucketSize = 1000, int NumBucket = 100, int Height = 20, bool AggPrint = true>
+struct TimeAvgPlot {
+  uint64_t cnt[NumEpoch][NumBucket] = {};
+  uint64_t sum[NumEpoch][NumBucket] = {};
+  TimeAvgPlot &operator<<(TimeValue tv) {
+    if (tv.epoch > NumEpoch) return *this;
+    long idx = tv.time / BucketSize;
+    if (idx >= 0 && idx < NumBucket) {
+      sum[tv.epoch][idx] += tv.val;
+      cnt[tv.epoch][idx]++;
+    }
+    return *this;
+  }
+  TimeAvgPlot &operator<<(const TimeAvgPlot &rhs) {
+    for (int i = 0; i < NumEpoch; i++) {
+      for (int j = 0; j < NumBucket; j++) {
+        sum[i][j] += rhs.sum[i][j];
+        cnt[i][j] += rhs.cnt[i][j];
+      }
+    }
+    return *this;
+  }
+};
+
+template <int NumEpoch = 20, int BucketSize = 1000, int NumBucket = 100, int Height = 20, bool AggPrint = true>
+std::ostream &operator<<(std::ostream &out, const TimeAvgPlot<NumEpoch, BucketSize, NumBucket, Height, AggPrint> &h)
+{
+  int64_t unit = 1;
+  double avg[NumBucket];
+  auto printRow = [&unit, &avg]() {
+    for (int i = 0; i < Height; i++) {
+      std::cout << std::setw(10) << unit * (Height - i) << " ";
+      for (int j = 0; j < NumBucket; j++) {
+        std::cout << ((avg[j] > unit * (Height - i - 1)) ? "#" : " ");
+      }
+      std::cout << std::endl;
+    }
+    std::cout << std::setw(10) << 0 << " ";
+    for (int i = 0; i < NumBucket; i++) {
+      std::cout << (((i + 1) % 10 == 0) ? "+" : "-");
+    }
+    std::cout << std::endl;
+  };
+
+  if (AggPrint) {
+    for (int i = 0; i < NumBucket; i++) {
+      double sum = 0, cnt = 0;
+      for (int j = 0; j < NumEpoch; j++) {
+        sum += h.sum[j][i];
+        cnt += h.cnt[j][i];
+      }
+      avg[i] = sum / cnt;
+      unit = std::max(unit, static_cast<int64_t>(std::ceil(avg[i] / Height)));
+    }
+    printRow();
+  } else {
+    for (int i = 0; i < NumEpoch; i++) {
+      for (int j = 0; j < NumBucket; j++) {
+        double sum = h.sum[i][j];
+        double cnt = h.cnt[i][j];
+        unit = std::max(unit, static_cast<int64_t>(std::ceil(sum / cnt / Height)));
+      }
+    }
+
+    for (int i = 0; i < NumEpoch; i++) {
+      for (int j = 0; j < NumBucket; j++) {
+        double sum = h.sum[i][j];
+        double cnt = h.cnt[i][j];
+        avg[j] = sum / cnt;
+      }
+      printRow();
+    }
   }
   return out;
 }

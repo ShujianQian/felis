@@ -291,7 +291,7 @@ void PWVScheduler::Reset()
   is_graph_built = false;
 }
 
-size_t EpochExecutionDispatchService::g_max_item = 20_M;
+size_t EpochExecutionDispatchService::g_max_item = 200_M;
 const size_t EpochExecutionDispatchService::kHashTableSize = 100001;
 
 EpochExecutionDispatchService::EpochExecutionDispatchService()

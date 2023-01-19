@@ -180,7 +180,7 @@ retry_after_periodicIO:
     CoroStack *to_co = paused_coro;
     paused_coro = nullptr;
     cs_trace("core {} found a paused coroutine when getting piece, switch to that", core_id);
-    ShutdownAndSwitchTo(paused_coro);
+    ShutdownAndSwitchTo(to_co);
     abort();  //unreachable
   }
 
@@ -306,7 +306,7 @@ bool felis::CoroSched::WaitForVHandleVal() {
 
   // 2. try to run something from the ready queue
   CoroStack *ready_candidate = ready_queue.Pop();
-  if (ready_candidate != nullptr) {
+  while (ready_candidate != nullptr) {
     if (ooo_buffer_len < g_ooo_buffer_size) {
       // if there is space in the OOO buffer, **preempt** myself to run the ready candidate
       num_detached_coros--;
@@ -320,21 +320,25 @@ bool felis::CoroSched::WaitForVHandleVal() {
       SwitchTo(ready_candidate);
       // switched back from the ready candidate, continue running
     }
+    ready_candidate = ready_queue.Pop();
   }
 
   // 3. resolve deadlock
+  bool requeue_myself = false;
   if (ooo_buffer_len == g_ooo_buffer_size  // ooo_buffer is full
-      && candidate->preempt_times > kMaxBackoff  // has preempted max backoff times
-      && (candidate->sched_key > priority_queue.q[0].key  // the top of priority queue has smaller sched_key
-          || (candidate->sched_key == priority_queue.q[0].key  // the top of priority queue has the same sched_key
-              && candidate->running_piece->fv_signals > 0))) {  // but the waiting piece is a receiving piece
+      && !priority_queue.empty()
+      && candidate->sched_key > priority_queue.q[0].key) {  // the top of priority queue has smaller sched_key
     // re-queue transactions that has larger sched_key than the top of the priority queue
     size_t new_ooo_buffer_size = 0;
     for (size_t i = 0; i < ooo_buffer_len; i++) {
       CoroStack *coro_to_reject = ooo_buffer[i];
-      if (coro_to_reject->sched_key >= priority_queue.q[0].key) {
+      if (coro_to_reject->sched_key > priority_queue.q[0].key) {
         svc.AddToPriorityQueue(q, coro_to_reject->running_piece);
-        ReturnCoroStack(coro_to_reject);
+        if (coro_to_reject == &me) {
+          requeue_myself = true;
+        } else {
+          ReturnCoroStack(coro_to_reject);
+        }
       } else {
         ooo_buffer[new_ooo_buffer_size] = coro_to_reject;
         new_ooo_buffer_size++;
@@ -343,6 +347,7 @@ bool felis::CoroSched::WaitForVHandleVal() {
     cs_trace("core {} re-queued {} routines", core_id, ooo_buffer_len - new_ooo_buffer_size);
     ooo_buffer_len = new_ooo_buffer_size;
     std::make_heap(ooo_buffer, ooo_buffer + ooo_buffer_len);
+    candidate = ooo_buffer[0];
   }
 
   // 4. check whether we should switch to a different waiting coroutine
@@ -354,7 +359,12 @@ bool felis::CoroSched::WaitForVHandleVal() {
     if (candidate == &me) {
       return false;
     } else {
-      SwitchTo(candidate);
+      if (requeue_myself) {
+        ShutdownAndSwitchTo(candidate);
+        abort();  // unreachable
+      } else {
+        SwitchTo(candidate);
+      }
       return true;
     }
   }
@@ -362,7 +372,12 @@ bool felis::CoroSched::WaitForVHandleVal() {
   // 5. finally run new PieceRoutines on the priority queue
   if (!priority_queue.empty()) {
     cs_trace("core {} starting a new coroutine to run a priority queue piece", core_id);
-    StartNewCoroutine();
+    if (requeue_myself) {
+      ShutdownAndStartNew();
+      abort();  // unreachable
+    } else {
+      StartNewCoroutine();
+    }
     return true;
   }
 
@@ -434,6 +449,17 @@ void felis::CoroSched::StartNewCoroutine() {
   auto &stack = cs->stack;
   coro_reset_coroutine(&co);
   cs_trace("core {} is StartNewCoroutine {} from {}", core_id, (void *) &co, (void *) coro_get_co());
+  coro_resume(&co);
+}
+
+void felis::CoroSched::ShutdownAndStartNew() {
+  CoroStack *cs = GetCoroStack();
+  auto &co = cs->coroutine;
+  auto &stack = cs->stack;
+  coro_reset_coroutine(&co);
+  auto my_cs = (CoroStack *) coro_get_co();
+  ReturnCoroStack(my_cs);
+  cs_trace("core {} is ShutdownAndStartNew {} from {}", core_id, (void *) &co, (void *) coro_get_co());
   coro_resume(&co);
 }
 

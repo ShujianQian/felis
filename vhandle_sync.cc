@@ -6,6 +6,8 @@
 #include "log.h"
 #include "opts.h"
 #include "coro_sched.h"
+#include "felis_probes.h"
+#include "x86intrin.h"
 
 namespace felis {
 
@@ -69,9 +71,17 @@ long SpinnerSlot::GetWaitCountStat(int core)
   return slot(core)->wait_cnt;
 }
 
-void SpinnerSlot::WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ver,
-                              void *handle)
+void SpinnerSlot::WaitForData(uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle)
 {
+  auto sched = go::Scheduler::Current();
+  auto &transport = util::Impl<PromiseRoutineTransportService>();
+  auto &dispatch = util::Impl<PromiseRoutineDispatchService>();
+  auto routine = sched->current_routine();
+  bool should_spin = true;
+  uint64_t preempt_times = 0;
+  uint64_t wait_start_ticks, wait_end_ticks, preempt_start_ticks, preempt_end_ticks, total_preempted_ticks = 0;
+  wait_start_ticks = __rdtsc();
+
   probes::VersionRead{false, handle}();
 
   uintptr_t oldval = *addr;
@@ -79,8 +89,8 @@ void SpinnerSlot::WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t v
 
   probes::VersionRead{true, handle}();
 
-  int core = go::Scheduler::CurrentThreadPoolId() - 1;
-  uint64_t mask = 1ULL << core;
+  int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
+  uint64_t mask = 1ULL << core_id;
   ulong wait_cnt = 2;
 
   while (true) {
@@ -88,14 +98,60 @@ void SpinnerSlot::WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t v
     uintptr_t newval = val & ~mask;
     bool notified = false;
     if ((oldval = __sync_val_compare_and_swap(addr, val, newval)) == val) {
-      notified = Spin(sid, ver, wait_cnt, addr);
+      while (!slot(core_id)->done.load(std::memory_order_acquire)) {
+        wait_cnt++;
+        if (unlikely((wait_cnt & 0x7FFFFFFF) == 0)) {
+          int dep = dispatch.TraceDependency(ver);
+          logger->error("Deadlock on core {}? {} (using {}) waiting for {} ({}) node ({}), ptr {}",
+                        core_id, sid, (void *) routine, ver, dep, ver & 0xFF, (void *) addr);
+          if (CoroSched::g_use_coro_sched) {
+            coro_sched->DumpStatus();
+          }
+          sleep(600);
+        }
+
+        if ((wait_cnt & 0x0FFFF) == 0) {
+          // Because periodic flush will run on all cores, we just have to flush our
+          // own per-core buffer.
+          transport.PeriodicIO(core_id);
+        }
+
+        if (!should_spin || (wait_cnt & 0x00FF) == 0) {
+          should_spin = false;
+          preempt_times++;
+          bool preempted;
+          preempt_start_ticks = __rdtsc();
+          if (Options::kUseCoroutineScheduler) {
+            preempted = coro_sched->WaitForVHandleVal();
+          }
+          else {
+            preempted = ((BasePieceCollection::ExecutionRoutine *) routine)->Preempt(sid, ver);
+          }
+          preempt_end_ticks = __rdtsc();
+          total_preempted_ticks += preempt_end_ticks - preempt_start_ticks;
+          if (preempted) {
+//            break;
+            goto skip_clear;
+          }
+        }
+        if (slot(core_id)->done.load(std::memory_order_acquire))
+          break;
+        _mm_pause();
+      }
+      slot(core_id)->done.store(false, std::memory_order_release);
+      skip_clear:
       oldval = *addr;
     }
+
     if (!IsPendingVal(oldval)) {
-      slot(core)->wait_cnt += wait_cnt;
-      return;
+      slot(core_id)->wait_cnt += wait_cnt;
+      break;
     }
   }
+  wait_end_ticks = __rdtsc();
+  probes::NumPreempt{preempt_times, sid}();
+  probes::WaitTime{(wait_end_ticks - wait_start_ticks - total_preempted_ticks) / 2200, sid}();
+
 }
 
 void SpinnerSlot::OfferData(volatile uintptr_t *addr, uintptr_t obj)
@@ -127,7 +183,7 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uin
   auto &transport = util::Impl<PromiseRoutineTransportService>();
   auto &dispatch = util::Impl<PromiseRoutineDispatchService>();
   auto routine = sched->current_routine();
-  //int preempt_times = 0;
+  bool should_spin = true;
   // routine->set_busy_poll(true);
 
   // abort_if(core_id < 0, "We should not run on thread pool 0!");
@@ -150,8 +206,9 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uin
       transport.PeriodicIO(core_id);
     }
 
-    if ((wait_cnt & 0x00FF) == 0) {
-      //preempt_times++;
+    if (!should_spin || (wait_cnt & 0x00FF) == 0) {
+//      should_spin = false;
+//      preempt_times++;
       bool preempted;
       if (Options::kUseCoroutineScheduler) {
         preempted = coro_sched->WaitForVHandleVal();
@@ -196,7 +253,7 @@ SimpleSync::SimpleSync()
   buffer = (SimpleSyncData *) AllocateBuffer();
 }
 
-void SimpleSync::WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle)
+void SimpleSync::WaitForData(uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle)
 {
   long wait_cnt = 2;
   int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
@@ -204,7 +261,10 @@ void SimpleSync::WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ve
   auto &transport = util::Impl<PromiseRoutineTransportService>();
   auto &dispatch = util::Impl<PromiseRoutineDispatchService>();
   auto routine = sched->current_routine();
-  //int preempt_times = 0;
+  bool should_spin = true;
+  uint64_t preempt_times = 0;
+  uint64_t wait_start_ticks, wait_end_ticks, preempt_start_ticks, preempt_end_ticks, total_preempted_ticks = 0;
+  wait_start_ticks = __rdtsc();
 
   while (IsPendingVal(*addr)) {
     wait_cnt++;
@@ -222,14 +282,18 @@ void SimpleSync::WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ve
       transport.PeriodicIO(core_id);
     }
 
-    if ((wait_cnt & 0x00FF) == 0) {
-      //preempt_times++;
+    if (!should_spin || (wait_cnt & 0x00FF) == 0) {
+      should_spin = false;
+      preempt_times++;
       bool preempted;
+      preempt_start_ticks = __rdtsc();
       if (Options::kUseCoroutineScheduler) {
         preempted = coro_sched->WaitForVHandleVal();
       } else {
         preempted = ((BasePieceCollection::ExecutionRoutine *) routine)->Preempt(sid, ver);
       }
+      preempt_end_ticks = __rdtsc();
+      total_preempted_ticks += preempt_end_ticks - preempt_start_ticks;
       if (preempted) {
         continue;
       }
@@ -239,8 +303,11 @@ void SimpleSync::WaitForData(volatile uintptr_t *addr, uint64_t sid, uint64_t ve
       break;
     _mm_pause();
   }
+  wait_end_ticks = __rdtsc();
   auto d = std::div(core_id, mem::kNrCorePerNode);
   buffer[64 * d.quot + d.rem].wait_cnt += wait_cnt;
+  probes::NumPreempt{preempt_times, sid}();
+  probes::WaitTime{(wait_end_ticks - wait_start_ticks - total_preempted_ticks) / 2200, sid}();
 }
 
 void SimpleSync::ClearWaitCountStats()

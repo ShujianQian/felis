@@ -70,10 +70,10 @@ public:
   static size_t g_ooo_buffer_size;  /*!< size of the out of order execution window */
 
 private:
-  static constexpr size_t kMaxNrCoroutine = 10000;  /*!< number of coroutines allocated at initialization */
-  static constexpr size_t kCoroutineStackSize = 64 * 1024;  /*!< min size of the coroutines' stack */
+  static constexpr size_t kMaxNrCoroutine = 40000;  /*!< number of coroutines allocated at initialization */
+  static constexpr size_t kCoroutineStackSize = 32 * 1024;  /*!< min size of the coroutines' stack */
   static constexpr uint64_t kPreemptKeyThreshold = 17000;  /*!< backoff step for preempted pieces */
-  static constexpr uint64_t kMaxBackoff = 40;  /*!< max number of backoff steps for preempted pieces */
+  static constexpr uint64_t kMaxBackoff = UINT64_MAX;  /*!< max number of backoff steps for preempted pieces */
   static constexpr uint64_t kPeriodicIOInterval = 0x3F;  /*!< PeriodicIO event trigger interval */
 
   uint64_t core_id;  /*!< id of the core where this scheduler belongs to */
@@ -119,6 +119,7 @@ private:
   void ShutdownAndSwitchTo(CoroStack *coro);  /*!< shutdown myself and switch to a different coroutine */
   void SwitchTo(CoroStack *coro);  /*!< switch to a selected coroutine that was preempted */
   void StartNewCoroutine();  /*!< switch to run a brand new coroutine */
+  void ShutdownAndStartNew();  /*!< shutdown myself and switch to a new coroutine */
 
 };
 

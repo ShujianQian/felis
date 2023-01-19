@@ -86,4 +86,6 @@ static void debug(std::string_view fmt, T... args)
 #define cs_trace(...) ((void) 0)
 #endif
 
+void log_mem_usage();
+
 #endif /* LOG_H */

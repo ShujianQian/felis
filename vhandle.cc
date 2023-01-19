@@ -233,7 +233,7 @@ void SortedArrayVHandle::AppendNewVersion(uint64_t sid, uint64_t epoch_nr, int o
   }
 }
 
-volatile uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
+uintptr_t *SortedArrayVHandle::WithVersion(uint64_t sid, int &pos)
 {
   assert(size > 0);
 
@@ -286,7 +286,7 @@ found:
 VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
 {
   int pos;
-  volatile uintptr_t *addr = WithVersion(sid, pos);
+  uintptr_t *addr = WithVersion(sid, pos);
   if (!addr) return nullptr;
 
   sync().WaitForData(addr, sid, versions[pos], (void *) this);

@@ -24,7 +24,7 @@ class CompletionObject {
     callback.PreComplete();
     auto cnt = comp_count.fetch_sub(dec) - dec;
     if (cnt < 0) {
-      fprintf(stderr, "Completion handler isn't enough!\n");
+      logger->error("Completion handler isn't enough! left = {}, completed = {}", cnt + dec, dec);
       std::abort();
     }
     callback(cnt);

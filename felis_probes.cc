@@ -27,6 +27,16 @@ static struct ProbeMain {
   std::vector<long> mem_usage;
   std::vector<long> expansion;
 
+  agg::Agg<agg::Average> num_preempt_avg;
+  agg::Agg<agg::Histogram<32, 0, 1>> num_preempt;
+  agg::Agg<agg::Histogram<33, 0, 100>> num_preempt_hist;
+  agg::Agg<agg::LogHistogram<8, 0, 10>> num_preempt_loghist;
+  agg::Agg<agg::TimeAvgPlot<20, 1000, 100, 20, true>> num_preempt_timeavgplot;
+  agg::Agg<agg::Average> wait_times_us_avg;
+  agg::Agg<agg::Histogram<33, 0, 20>> wait_times_us_hist;
+  agg::Agg<agg::LogHistogram<5, 0, 10>> wait_times_us_log_hist;
+  agg::Agg<agg::TimeAvgPlot<20, 1000, 100, 20, true>> wait_times_timeavgplot;
+
   ~ProbeMain();
 } global;
 
@@ -44,6 +54,16 @@ thread_local struct ProbePerCore {
   AGG(absorb_memmove_avg);
   AGG(mcs_wait_cnt);
   AGG(mcs_wait_cnt_avg);
+
+  AGG(num_preempt_avg);
+  AGG(num_preempt);
+  AGG(num_preempt_hist);
+  AGG(num_preempt_loghist);
+  AGG(num_preempt_timeavgplot);
+  AGG(wait_times_us_avg);
+  AGG(wait_times_us_hist);
+  AGG(wait_times_us_log_hist);
+  AGG(wait_times_timeavgplot);
 } statcnt;
 
 // Default for all probes
@@ -60,6 +80,23 @@ static void CountUpdate(agg::Histogram<32, 0, 1> &agg, int nr_update, int core =
 ////////////////////////////////////////////////////////////////////////////////
 // Override for some enabled probes
 ////////////////////////////////////////////////////////////////////////////////
+
+template <> void OnProbe(felis::probes::NumPreempt in)
+{
+  statcnt.num_preempt_avg << in.num_preempt;
+  statcnt.num_preempt_hist << in.num_preempt;
+  statcnt.num_preempt_loghist << in.num_preempt;
+  CountUpdate(statcnt.num_preempt, in.num_preempt);
+  statcnt.num_preempt_timeavgplot << agg::TimeValue{(in.sid >> 32) - 1, in.sid >> 8 & 0xFFFFFF, in.num_preempt};
+}
+
+template <> void OnProbe(felis::probes::WaitTime in)
+{
+  statcnt.wait_times_us_avg << (long) in.wait_time;
+  statcnt.wait_times_us_hist << (long) in.wait_time;
+  statcnt.wait_times_us_log_hist << (long) in.wait_time;
+  statcnt.wait_times_timeavgplot << agg::TimeValue{(in.sid >> 32) - 1, in.sid >> 8 & 0xFFFFFF, in.wait_time};
+}
 
 #if 0
 
@@ -201,6 +238,23 @@ ProbeMain::~ProbeMain()
             << std::endl;
   std::cout << "Memmove/Sorting Distance Avg: " << global.absorb_memmove_avg << std::endl;
 #endif
+  std::cout << "[Preempt stat] avg number of preempt per txn = " << global.num_preempt_avg() << std::endl;
+  std::cout << "number of waits in vhandle_sync = " << global.num_preempt_avg.cnt << std::endl;
+  std::cout << "Num preempts per core" << std::endl;
+  std::cout << global.num_preempt();
+  std::cout << "Num preempts histogram" << std::endl;
+  std::cout << global.num_preempt_hist();
+  std::cout << "Num preempts log histogram" << std::endl;
+  std::cout << "count = " << global.num_preempt_loghist().cnt << std::endl;
+  std::cout << global.num_preempt_loghist;
+  std::cout << global.num_preempt_timeavgplot();
+
+  std::cout << "[VHandle wait stat] avg wait time = " << global.wait_times_us_avg() << "us" << std::endl;
+  std::cout << "wait times histogram (us)" << std::endl;
+  std::cout << global.wait_times_us_hist();
+  std::cout << "wait times log histogram (us)" << std::endl;
+  std::cout << global.wait_times_us_log_hist();
+  std::cout << global.wait_times_timeavgplot();
 }
 
 PROBE_LIST;

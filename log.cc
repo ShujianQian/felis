@@ -76,3 +76,34 @@ void PerfLog::Clear()
 {
   if (!is_started) duration = 0;
 }
+
+static std::string format_size(uint64_t size)
+{
+  const std::string sizes[] {"B", "KB", "MB", "GB", "TB"};
+  int order = 0;
+  auto dsize = static_cast<double>(size);
+  while (dsize > 1024) {
+    dsize /= 1024.0;
+    order++;
+  }
+  return fmt::format("{:.2f}{}", dsize, sizes[order]);
+}
+
+void log_mem_usage()
+{
+  FILE *f = fopen("/proc/self/statm", "r");
+  uint64_t size, resident, share, text, lib, data, dirty;
+  const uint64_t page_size = 64;
+  fscanf(f, "%lu %lu %lu %lu %lu %lu %lu", &size, &resident, &share, &text, &lib, &data, &dirty);
+  fclose(f);
+  size *= page_size;
+  resident *= page_size;
+  share *= page_size;
+  text *= page_size;
+  lib *= page_size;
+  data *= page_size;
+  dirty *= page_size;
+  logger->info("[Memory Usage Stat] size {}, res {}, shared {}, text {}, lib {}, data {}, dt {}",
+               format_size(size), format_size(resident), format_size(share), format_size(text), format_size(lib),
+               format_size(data), format_size(dirty));
+}
