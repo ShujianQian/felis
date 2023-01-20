@@ -14,6 +14,8 @@ __thread felis::CoroSched *felis::coro_sched = nullptr;
 bool felis::CoroSched::g_use_coro_sched = false;
 bool felis::CoroSched::g_use_signal_future = false;
 size_t felis::CoroSched::g_ooo_buffer_size = 25;
+uint64_t felis::CoroSched::g_preempt_step = 17000;
+uint64_t felis::CoroSched::g_max_backoff = UINT64_MAX;
 
 /** global list of per-core schedulers */
 static felis::CoroSched *coro_scheds[felis::NodeConfiguration::kMaxNrThreads] = {nullptr};
@@ -253,7 +255,8 @@ waiting_for_detached:
   abort();  // unreachable
 }
 
-bool felis::CoroSched::WaitForVHandleVal() {
+bool felis::CoroSched::PreemptWait()
+{
   auto &zq = svc.queues[core_id]->zq;
   auto &q = svc.queues[core_id]->pq;
   auto &state = svc.queues[core_id]->state;
@@ -280,7 +283,7 @@ bool felis::CoroSched::WaitForVHandleVal() {
   // add myself to the ooo buffer
   ooo_buffer[ooo_buffer_len] = &me;
   me.preempt_times++;
-  me.preempt_key = me.sched_key + kPreemptKeyThreshold * std::min(me.preempt_times, kMaxBackoff);
+  me.preempt_key = me.sched_key + g_preempt_step * std::min(me.preempt_times, g_max_backoff);
   ooo_buffer_len++;
   std::push_heap(ooo_buffer, ooo_buffer + ooo_buffer_len, CoroStack::MinHeapCompare);
   CoroStack *candidate = ooo_buffer[0];
@@ -384,9 +387,14 @@ bool felis::CoroSched::WaitForVHandleVal() {
   abort();  // unreachable
 }
 
+bool felis::CoroSched::WaitForVHandleVal()
+{
+  return PreemptWait();
+}
+
 bool felis::CoroSched::WaitForFutureValue(BaseFutureValue *future) {
   if (!g_use_signal_future) {
-    return WaitForVHandleVal();
+    return PreemptWait();
   }
 
   assert(future->waiter == nullptr);

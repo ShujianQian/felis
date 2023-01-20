@@ -98,6 +98,7 @@ public:
 
   /* Scheduler Calls */
   void StartCoroExec();  /*!< The entry point of the Coroutine Scheduler. To be called by the ExecutionRoutine */
+  bool PreemptWait();  /*!< preempts the current coroutine for waiting */
   bool WaitForVHandleVal();  /*!< calls when waiting for a vhandle value and tries to preempt */
   bool WaitForFutureValue(BaseFutureValue *future);  /*!< calls when waiting for a future */
   void AddToReadyQueue(CoroStack *coro);  /*!< adds a coroutine previously attached somewhere else back */
