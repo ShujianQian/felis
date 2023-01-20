@@ -71,7 +71,7 @@ long SpinnerSlot::GetWaitCountStat(int core)
   return slot(core)->wait_cnt;
 }
 
-void SpinnerSlot::WaitForData(uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle)
+void SpinnerSlot::WaitForData(uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle, void *waiters)
 {
   auto sched = go::Scheduler::Current();
   auto &transport = util::Impl<PromiseRoutineTransportService>();
@@ -116,13 +116,17 @@ void SpinnerSlot::WaitForData(uintptr_t *addr, uint64_t sid, uint64_t ver, void 
           transport.PeriodicIO(core_id);
         }
 
-        if (!should_spin || (wait_cnt & 0x00FF) == 0) {
+        if (!should_spin || CoroSched::g_use_signal_vhandle || (wait_cnt & 0x00FF) == 0) {
           should_spin = false;
           preempt_times++;
           bool preempted;
           preempt_start_ticks = __rdtsc();
           if (Options::kUseCoroutineScheduler) {
-            preempted = coro_sched->WaitForVHandleVal();
+            if (CoroSched::g_use_signal_vhandle) {
+              preempted = coro_sched->WaitForVHandleVal(addr, ver, (CoroSched::ReadyQueue::ListNode **) waiters);
+            } else {
+              preempted = coro_sched->PreemptWait();
+            }
           }
           else {
             preempted = ((BasePieceCollection::ExecutionRoutine *) routine)->Preempt(sid, ver);
@@ -176,6 +180,7 @@ void SpinnerSlot::OfferData(volatile uintptr_t *addr, uintptr_t obj)
   Notify(bitmap);
 }
 
+/*
 bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uintptr_t *ptr)
 {
   int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
@@ -211,7 +216,7 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uin
 //      preempt_times++;
       bool preempted;
       if (Options::kUseCoroutineScheduler) {
-        preempted = coro_sched->WaitForVHandleVal();
+        preempted = coro_sched->PreemptWait();
       } else {
         preempted = ((BasePieceCollection::ExecutionRoutine *) routine)->Preempt(sid, ver);
       }
@@ -231,6 +236,7 @@ bool SpinnerSlot::Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uin
   slot(core_id)->done.store(false, std::memory_order_release);
   return true;
 }
+*/
 
 void SpinnerSlot::Notify(uint64_t bitmap)
 {
@@ -253,7 +259,7 @@ SimpleSync::SimpleSync()
   buffer = (SimpleSyncData *) AllocateBuffer();
 }
 
-void SimpleSync::WaitForData(uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle)
+void SimpleSync::WaitForData(uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle, void *waiters)
 {
   long wait_cnt = 2;
   int core_id = go::Scheduler::CurrentThreadPoolId() - 1;
@@ -288,7 +294,11 @@ void SimpleSync::WaitForData(uintptr_t *addr, uint64_t sid, uint64_t ver, void *
       bool preempted;
       preempt_start_ticks = __rdtsc();
       if (Options::kUseCoroutineScheduler) {
-        preempted = coro_sched->WaitForVHandleVal();
+        if (CoroSched::g_use_signal_vhandle) {
+          preempted = coro_sched->WaitForVHandleVal(addr, ver, (CoroSched::ReadyQueue::ListNode **) waiters);
+        } else {
+          preempted = coro_sched->PreemptWait();
+        }
       } else {
         preempted = ((BasePieceCollection::ExecutionRoutine *) routine)->Preempt(sid, ver);
       }

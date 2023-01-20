@@ -103,6 +103,7 @@ struct Options {
   static inline const auto kOOOBufferSize = Option("OOOBufferSize");
   static inline const auto kPreemptStep = Option("PreemptStep");
   static inline const auto kMaxBackoff = Option("MaxBackoff");
+  static inline const auto kCoroSchedSignalVHandle = Option("CoroSchedSignalVHandle", false);
 
   static inline bool ParseExtentedOptions(std::string arg)
   {

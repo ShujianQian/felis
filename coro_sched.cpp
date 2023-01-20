@@ -8,11 +8,13 @@
 #include "log.h"
 #include "opts.h"
 #include "txn.h"
+#include "vhandle_sync.h"
 
 __thread felis::CoroSched *felis::coro_sched = nullptr;
 
 bool felis::CoroSched::g_use_coro_sched = false;
 bool felis::CoroSched::g_use_signal_future = false;
+bool felis::CoroSched::g_use_signal_vhandle = false;
 size_t felis::CoroSched::g_ooo_buffer_size = 25;
 uint64_t felis::CoroSched::g_preempt_step = 17000;
 uint64_t felis::CoroSched::g_max_backoff = UINT64_MAX;
@@ -57,6 +59,14 @@ void felis::CoroSched::ReadyQueue::Add(felis::CoroSched::CoroStack *coro)
 {
   auto list_node = (ListNode *) list_node_brk.Alloc(sizeof(ListNode));
   list_node->coro = coro;
+  ListNode *old_head = list_head;
+  do {
+    list_node->next = old_head;
+  } while(!list_head.compare_exchange_strong(old_head, list_node));
+}
+
+void felis::CoroSched::ReadyQueue::Append(felis::CoroSched::ReadyQueue::ListNode *list_node)
+{
   ListNode *old_head = list_head;
   do {
     list_node->next = old_head;
@@ -387,9 +397,57 @@ bool felis::CoroSched::PreemptWait()
   abort();  // unreachable
 }
 
-bool felis::CoroSched::WaitForVHandleVal()
+bool felis::CoroSched::WaitForVHandleVal(uintptr_t *addr, uint64_t ver, ReadyQueue::ListNode **waiters)
 {
-  return PreemptWait();
+
+  // 1. if vhandle is already available, don't wait
+  uintptr_t old_val = *addr;
+  auto &sync = util::Impl<VHandleSyncService>();
+  if (!sync.IsPendingVal(old_val)) {
+    return true;
+  }
+
+  // 2. attach myself to the vhandle entry's waiter list
+  using ListNode = ReadyQueue::ListNode;
+  ListNode *old_head;
+  auto me = (ListNode *) ready_queue.list_node_brk.Alloc(sizeof(ListNode));
+  me->coro = (CoroStack *) coro_get_co();
+  old_head = __atomic_load_n(waiters, __ATOMIC_SEQ_CST);
+  do {
+    me->next = old_head;
+  } while(!__atomic_compare_exchange_n(waiters, &old_head, me, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST));
+
+  // 3. if between 1. and 3., the vhandle entry becomes ready, wake up any waiters left
+  bool removed_myself = false;
+  if (!sync.IsPendingVal(*addr)) {
+    ListNode *new_head;
+    old_head = __atomic_load_n(waiters, __ATOMIC_SEQ_CST);
+    while (true) {
+      if (old_head == nullptr) {
+        break;
+      }
+      new_head = old_head->next;
+      if (!__atomic_compare_exchange_n(waiters, &old_head, new_head, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+        continue;
+      }
+      if (old_head == me) {
+        removed_myself = true;
+      } else {
+        CoroSched *waiter_sched = CoroSched::GetCoroSchedForCore((int) old_head->coro->core_id);
+        waiter_sched->AppendToReadyQueue(old_head);
+      }
+    }
+  }
+
+  // 4. if I need to wait or someone else removed myself from the waiters, yield
+  if (!removed_myself) {
+    num_detached_coros++;
+    StartNewCoroutine();
+  }
+
+  abort_if(sync.IsPendingVal(*addr), "Returned from VHandle wait but the VHandle entry is still pending.");
+
+  return true;
 }
 
 bool felis::CoroSched::WaitForFutureValue(BaseFutureValue *future) {
@@ -434,6 +492,11 @@ bool felis::CoroSched::WaitForFutureValue(BaseFutureValue *future) {
 void felis::CoroSched::AddToReadyQueue (felis::CoroSched::CoroStack *coro)
 {
   ready_queue.Add(coro);
+}
+
+void felis::CoroSched::AppendToReadyQueue(felis::CoroSched::ReadyQueue::ListNode *list_node)
+{
+  ready_queue.Append(list_node);
 }
 
 void felis::CoroSched::ExitExecutionRoutine()

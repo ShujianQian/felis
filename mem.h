@@ -374,6 +374,11 @@ class ParallelRegion {
     return idx < 0 ? 0 : idx;
   }
 
+  static constexpr size_t AlignToClassSize(size_t sz) {
+    int log2 = std::max(5, 64 - __builtin_clzll(sz - 1));
+    return 1ull << log2;
+  }
+
   void ApplyFromConf(json11::Json conf);
 
   void set_pool_capacity(size_t sz, size_t cap) {

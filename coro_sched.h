@@ -18,7 +18,13 @@ class CoroSched;
 
 extern __thread CoroSched *coro_sched;  /*!< used to conveniently access this core's scheduler */
 
+class SortedArrayVHandle;
+class SimpleSync;
+class SpinnerSlot;
 class CoroSched {
+  friend SortedArrayVHandle;
+  friend SpinnerSlot;
+  friend SimpleSync;
 public:
   struct CoroStack {
     struct coroutine coroutine;  /*!< coroutine struct containing the function pointer and the saved context */
@@ -37,7 +43,9 @@ private:
     struct ListNode {
       CoroStack *coro;  /*!< pointer to the detached coroutine itself */
       ListNode *next;
+      uint8_t padding[48];
     };
+    static_assert(sizeof(ListNode) == 64);
 
     /** brk style memory pre-allocated for ListNode, simplifies ListNode allocation and eliminates the ABA problem */
     struct ConcurrentBrk {
@@ -60,6 +68,7 @@ private:
     void Reset();
     bool IsEmpty();
     void Add(CoroStack *coro);  /*!< atomically add coroutine the ready queue */
+    void Append(ListNode *list_node);  /*!< atomically add coroutine the ready queue */
     CoroStack *Pop();  /*!< atomically pops the ready queue */
   };
 
@@ -67,6 +76,7 @@ public:
   /* Settings */
   static bool g_use_coro_sched;  /*!< if set use the coroutine scheduler instead of the normal ExecutionRoutine one */
   static bool g_use_signal_future;  /*!< if set use signal mechanism for future waits */
+  static bool g_use_signal_vhandle;  /*!< if set use signal mechanism for vhandle waits */
   static size_t g_ooo_buffer_size;  /*!< size of the out of order execution window */
   static uint64_t g_preempt_step; /*!< backoff step for preempted pieces */
   static uint64_t g_max_backoff;  /*!< max number of backoff steps for preempted pieces */
@@ -99,9 +109,10 @@ public:
   /* Scheduler Calls */
   void StartCoroExec();  /*!< The entry point of the Coroutine Scheduler. To be called by the ExecutionRoutine */
   bool PreemptWait();  /*!< preempts the current coroutine for waiting */
-  bool WaitForVHandleVal();  /*!< calls when waiting for a vhandle value and tries to preempt */
+  bool WaitForVHandleVal(uintptr_t *addr, uint64_t ver, ReadyQueue::ListNode **waiters);  /*!< calls when waiting for a vhandle value and tries to preempt */
   bool WaitForFutureValue(BaseFutureValue *future);  /*!< calls when waiting for a future */
   void AddToReadyQueue(CoroStack *coro);  /*!< adds a coroutine previously attached somewhere else back */
+  void AppendToReadyQueue(ReadyQueue::ListNode *list_node);  /*!< adds a coroutine previously attached somewhere else back */
 
   /* Debug */
   void DumpStatus(bool halt = true);

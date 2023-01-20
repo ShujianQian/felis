@@ -213,6 +213,9 @@ class CoroutineModule : public Module<CoreModule> {
     if (Options::kCoroSchedSignalFuture)
       CoroSched::g_use_signal_future = true;
 
+    if (Options::kCoroSchedSignalVHandle)
+      CoroSched::g_use_signal_vhandle = true;
+
     if (Options::kOOOBufferSize)
       CoroSched::g_ooo_buffer_size = Options::kOOOBufferSize.ToInt();
 

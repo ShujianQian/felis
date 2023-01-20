@@ -15,6 +15,8 @@
 
 #include "literals.h"
 
+#include "coro_sched.h"
+
 namespace felis {
 
 bool VHandleSyncService::g_lock_elision = false;
@@ -26,7 +28,12 @@ VHandleSyncService &BaseVHandle::sync()
 
 SortedArrayVHandle::SortedArrayVHandle()
 {
-  capacity = 4;
+  if (CoroSched::g_use_signal_vhandle) {
+    capacity = (kSize - sizeof(SortedArrayVHandle)) / sizeof(uint64_t) / 3;
+    static_assert((kSize - sizeof(SortedArrayVHandle)) / sizeof(uint64_t) / 3 == 2);
+  } else {
+    capacity = 4;
+  }
   // value_mark = 0;
   size = 0;
   cur_start = 0;
@@ -58,10 +65,12 @@ static uint64_t *EnlargePair64Array(SortedArrayVHandle *row,
                                     uint64_t *old_p, unsigned int old_cap, int old_regionid,
                                     unsigned int new_cap)
 {
-  const size_t old_len = old_cap * sizeof(uint64_t);
-  const size_t new_len = new_cap * sizeof(uint64_t);
+  const size_t old_len = CoroSched::g_use_signal_vhandle ?
+      mem::ParallelRegion::AlignToClassSize(old_cap * sizeof(uint64_t) * 3) : old_cap * sizeof(uint64_t) * 2;
+  const size_t new_len = CoroSched::g_use_signal_vhandle ?
+      mem::ParallelRegion::AlignToClassSize(new_cap * sizeof(uint64_t) * 3) : new_cap * sizeof(uint64_t) * 2;
 
-  auto new_p = (uint64_t *) mem::GetDataRegion().Alloc(2 * new_len);
+  auto new_p = (uint64_t *) mem::GetDataRegion().Alloc(new_len);
   if (!new_p) {
     return nullptr;
   }
@@ -69,8 +78,10 @@ static uint64_t *EnlargePair64Array(SortedArrayVHandle *row,
   std::copy(old_p, old_p + old_cap, new_p);
   // memcpy((uint8_t *) new_p + new_len, (uint8_t *) old_p + old_len, old_cap * sizeof(uint64_t));
   std::copy(old_p + old_cap, old_p + 2 * old_cap, new_p + new_cap);
+  if (CoroSched::g_use_signal_vhandle)
+    std::fill(new_p + 2 * new_cap, new_p + 3 * new_cap, (uint64_t) nullptr);
   if ((uint8_t *) old_p - (uint8_t *) row != 64)
-    mem::GetDataRegion().Free(old_p, old_regionid, 2 * old_len);
+    mem::GetDataRegion().Free(old_p, old_regionid, old_len);
   return new_p;
 }
 
@@ -98,7 +109,13 @@ void SortedArrayVHandle::IncreaseSize(int delta, uint64_t epoch_nr)
 
   if (unlikely(size > capacity)) {
     auto current_regionid = mem::ParallelPool::CurrentAffinity();
-    auto new_cap = std::max(8U, 1U << (32 - __builtin_clz((unsigned int) size)));
+    uint new_cap;
+    if (CoroSched::g_use_signal_vhandle) {
+      new_cap = std::max((size_t) 5,
+                         mem::ParallelRegion::AlignToClassSize(size * sizeof(uint64_t) * 3) / sizeof(uint64_t) / 3);
+    } else {
+      new_cap = std::max(8U, 1U << (32 - __builtin_clz((unsigned int) size)));
+    }
     auto new_versions = EnlargePair64Array(this, versions, capacity, alloc_by_regionid, new_cap);
 
     probes::VHandleExpand{(void *) this, capacity, new_cap}();
@@ -289,7 +306,7 @@ VarStr *SortedArrayVHandle::ReadWithVersion(uint64_t sid)
   uintptr_t *addr = WithVersion(sid, pos);
   if (!addr) return nullptr;
 
-  sync().WaitForData(addr, sid, versions[pos], (void *) this);
+  sync().WaitForData(addr, sid, versions[pos], (void *) this,  (void *) &(versions + 2 * capacity)[pos]);
 
   return (VarStr *) *addr;
 }
@@ -336,6 +353,25 @@ bool SortedArrayVHandle::WriteWithVersion(uint64_t sid, VarStr *obj, uint64_t ep
 
   // Writing to exact location
   sync().OfferData(addr, (uintptr_t) obj);
+
+  if (CoroSched::g_use_signal_vhandle) {
+    using ListNode = CoroSched::ReadyQueue::ListNode;
+    auto waiters_arr = (ListNode **) (versions + capacity * 2);
+    auto waiters = &waiters_arr[it - versions];
+    ListNode *old_head, *new_head;
+    old_head = __atomic_load_n(waiters, __ATOMIC_SEQ_CST);
+    while (true) {
+      if (old_head == nullptr) {
+        break;
+      }
+      new_head = old_head->next;
+      if (!__atomic_compare_exchange_n(waiters, &old_head, new_head, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+        continue;
+      }
+      CoroSched *waiter_sched = CoroSched::GetCoroSchedForCore((int) old_head->coro->core_id);
+      waiter_sched->AppendToReadyQueue(old_head);
+    }
+  }
 
   int latest = it - versions;
   probes::VersionWrite{this, latest, epoch_nr}();

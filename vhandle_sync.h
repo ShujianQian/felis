@@ -25,12 +25,12 @@ class SpinnerSlot : public VHandleSyncService {
 
   void ClearWaitCountStats() final override;
   long GetWaitCountStat(int core) final override;
-  bool Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uintptr_t *ptr);
+//  bool Spin(uint64_t sid, uint64_t ver, ulong &wait_cnt, volatile uintptr_t *ptr);
   void Notify(uint64_t bitmap);
-  bool IsPendingVal(uintptr_t val)  {
+  bool IsPendingVal(uintptr_t val) override {
     return (val >> 32) == (kPendingValue >> 32);
   }
-  void WaitForData(uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle) final override;
+  void WaitForData(uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle, void *waiters) final override;
   void OfferData(volatile uintptr_t *addr, uintptr_t obj) final override;
 };
 
@@ -43,9 +43,9 @@ class SimpleSync : public VHandleSyncService {
 
   void ClearWaitCountStats() final override;
   long GetWaitCountStat(int core) final override;
-  void WaitForData(uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle) final override;
+  void WaitForData(uintptr_t *addr, uint64_t sid, uint64_t ver, void *handle, void *waiters) final override;
   void OfferData(volatile uintptr_t *addr, uintptr_t obj) final override;
-  bool IsPendingVal(uintptr_t val) {
+  bool IsPendingVal(uintptr_t val) override {
     return val == kPendingValue;
   }
 };
