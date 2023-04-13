@@ -2,6 +2,7 @@
 #define UTIL_TYPES_H
 
 #include <optional>
+#include <memory>
 
 namespace util {
 // Typesafe get from a variadic arguments
