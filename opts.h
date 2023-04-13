@@ -6,6 +6,16 @@
 
 namespace felis {
 
+enum YcsbType {
+    YCSB_A,
+    YCSB_B,
+    YCSB_C,
+    YCSB_F
+};
+
+extern YcsbType ycsb_type;
+extern bool full_read;
+
 static inline long long ParseLargeNumber(std::string s)
 {
   size_t pos;

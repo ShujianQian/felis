@@ -108,6 +108,13 @@ class VarStr final {
     return instance;
   }
 
+  template <typename FieldT>
+  const FieldT ToFieldType(uint8_t field_id, size_t field_size) const {
+    FieldT instance;
+    instance.DecodeField(this, field_id, field_size);
+    return instance;
+  }
+
   std::string ToHex() const {
     return ToView().ToHex();
   }

@@ -85,7 +85,7 @@ class inline_str_base {
     assign(s, strlen(s));
   }
 
-  void assign(const char *s, size_t n) {
+  void __attribute__((noinline)) assign(const char *s, size_t n) {
     assert(n <= N);
     __builtin_memcpy(&buf[0], s, n);
     sz = n;
@@ -231,6 +231,11 @@ struct Serializer<inline_str_base<SizeType, N>> {
     Serializer<SizeType>::DecodeFrom((SizeType *) &sz, buf);
     p->assign((const char *) buf + Serializer<SizeType>::EncodeSize((const SizeType *) &sz), sz);
   }
+
+  static void DecodeFromField(ObjectType *p, const uint8_t *buf, size_t field_size) {
+    SizeType sz = field_size;
+    p->assign((const char *) buf + Serializer<SizeType>::EncodeSize((const SizeType *) &sz), sz);
+  }
 };
 
 /* T cannot be recusively serialized, due to performance costs */
@@ -349,6 +354,10 @@ class Object : public Base {
     this->DecodeFrom(str->data());
   }
 
+  void DecodeField(const VarStr *str, uint8_t field_id, size_t field_size) {
+    this->DecodeFromField(str->data() + field_id * field_size, field_size);
+  }
+
   void DecodeView(const VarStrView &view) {
     this->DecodeFrom(view.data());
   }
@@ -401,6 +410,12 @@ class Field : public Field<FieldSerializer, N - 1>, public FieldValue<N> {
   const uint8_t *DecodeFrom(const uint8_t *buf) {
     buf = PreviousFields::DecodeFrom(buf);
     Impl::DecodeFrom(pointer(), buf);
+    return buf + Impl::EncodeSize(pointer());
+  }
+
+  const uint8_t *DecodeFromField(const uint8_t *buf, size_t field_size)
+  {
+    Impl::DecodeFromField (pointer (), buf, field_size);
     return buf + Impl::EncodeSize(pointer());
   }
 };

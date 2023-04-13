@@ -24,6 +24,9 @@ void show_usage(const char *progname)
 
 namespace felis {
 
+YcsbType ycsb_type = YcsbType::YCSB_A;
+bool full_read = true;
+
 void ParseControllerAddress(std::string arg);
 
 }
@@ -36,13 +39,37 @@ int main(int argc, char *argv[])
   std::string workload_name;
   std::string node_name;
 
-  while ((opt = getopt(argc, argv, "w:n:c:X:")) != -1) {
+  while ((opt = getopt(argc, argv, "w:n:c:X:y:r:")) != -1) {
     switch (opt) {
       case 'w':
         workload_name = std::string(optarg);
         break;
       case 'n':
         node_name = std::string(optarg);
+        break;
+      case 'y':
+        if (std::string(optarg) == "ycsba")
+          ycsb_type = YcsbType::YCSB_A;
+        else if (std::string(optarg) == "ycsbb")
+          ycsb_type = YcsbType::YCSB_B;
+        else if (std::string(optarg) == "ycsbc")
+          ycsb_type = YcsbType::YCSB_C;
+        else if (std::string(optarg) == "ycsbf")
+          ycsb_type = YcsbType::YCSB_F;
+        else {
+          logger->error("Unknown YCSB type: {}", optarg);
+          std::abort();
+        }
+        break;
+      case 'r':
+        if (std::string(optarg) == "full")
+          full_read = true;
+        else if (std::string(optarg) == "field")
+          full_read = false;
+        else {
+          logger->error("Unknown read type: {}", optarg);
+          std::abort();
+        }
         break;
       case 'c':
         ParseControllerAddress(std::string(optarg));

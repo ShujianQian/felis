@@ -191,6 +191,11 @@ class Txn : public BaseTxn {
     template <typename T> T Read() {
       return ReadVarStr()->template ToType<T>();
     }
+
+    template<typename FieldT> FieldT ReadField(uint8_t field_id, size_t field_size) {
+      return ReadVarStr()->template ToFieldType<FieldT>(field_id, field_size);
+    }
+
     template <typename T> bool Write(const T &o) {
       return WriteVarStr(o.Encode());
     }

@@ -60,6 +60,7 @@ VarStr *BaseTxn::BaseTxnRow::ReadVarStr()
     return vhandle->ReadWithVersion(sid);
 }
 
+
 bool BaseTxn::BaseTxnRow::WriteVarStr(VarStr *obj)
 {
   if (!EpochClient::g_enable_granola && !EpochClient::g_enable_pwv) {

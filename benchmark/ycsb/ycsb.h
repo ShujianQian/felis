@@ -1,6 +1,8 @@
 #ifndef YCSB_H
 #define YCSB_H
 
+#include <random>
+
 #include "table_decl.h"
 #include "epoch.h"
 #include "slice.h"
@@ -27,6 +29,7 @@ struct Ycsb {
   using IndexBackend = felis::HashtableIndex;
   using Key = sql::YcsbKey;
   using Value = sql::YcsbValue;
+  using Field = sql::YcsbField;
 };
 
 using RandRng = foedus::assorted::ZipfianRandom;
@@ -34,6 +37,10 @@ using RandRng = foedus::assorted::ZipfianRandom;
 class Client : public felis::EpochClient {
   // Zipfian random generator
   RandRng rand;
+  std::mt19937 rng;
+  std::uniform_int_distribution<int> field_dist;
+  std::uniform_int_distribution<int> write_dist;
+  int write_threshold;
 
   friend class RMWTxn;
   static char zero_data[100];

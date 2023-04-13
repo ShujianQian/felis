@@ -1,3 +1,5 @@
+#include <random>
+
 #include "ycsb.h"
 #include "index.h"
 #include "txn_cc.h"
@@ -19,12 +21,20 @@ class DummySliceRouter {
 
 // static uint64_t *g_permutation_map;
 
+enum YcsbOpType: uint8_t {
+    READ, FULLREAD, UPDATE, RMW
+};
+
 struct RMWStruct {
   uint64_t keys[kTotal];
+  YcsbOpType ops[kTotal];
+  uint8_t fields[kTotal];
 };
 
 struct RMWState {
   VHandle *rows[kTotal];
+  YcsbOpType ops[kTotal];
+  uint8_t fields[kTotal];
   InvokeHandle<RMWState> futures[kTotal];
 
   std::atomic_ulong signal; // Used only if g_dependency
@@ -33,9 +43,12 @@ struct RMWState {
   struct LookupCompletion : public TxnStateCompletion<RMWState> {
     void operator()(int id, BaseTxn::LookupRowResult rows) {
       state->rows[id] = rows[0];
-      if (id < kTotal - Client::g_extra_read) {
-        bool last = (id == kTotal - Client::g_extra_read - 1);
-        handle(rows[0]).AppendNewVersion(last ? 0 : 1);
+//      if (id < kTotal - Client::g_extra_read) {
+//        bool last = (id == kTotal - Client::g_extra_read - 1);
+//        handle(rows[0]).AppendNewVersion(last ? 0 : 1);
+//      }
+      if (state->ops[id] == YcsbOpType::RMW || state->ops[id] == YcsbOpType::UPDATE) {
+        handle(rows[0]).AppendNewVersion(1);
       }
     }
   };
@@ -63,6 +76,11 @@ RMWStruct Client::GenerateTransactionInput<RMWStruct>()
     for (int j = 0; j < i; j++)
       if (s.keys[i] == s.keys[j])
         goto again;
+    s.fields[i] = field_dist(rng);
+    if (write_dist(rng) < write_threshold)
+      s.ops[i] = YcsbOpType::RMW;
+    else
+      s.ops[i] = full_read ? YcsbOpType::FULLREAD : YcsbOpType::READ;
   }
 
   return s;
@@ -79,6 +97,8 @@ class RMWTxn : public Txn<RMWState>, public RMWStruct {
   void PrepareInsert() override final {}
   static void WriteRow(TxnRow vhandle);
   static void ReadRow(TxnRow vhandle);
+  static void ReadField(TxnRow vhandle, uint8_t field_id);
+  static void UpdateRow(TxnRow vhandle);
 
   template <typename Func>
   void RunOnPartition(Func f) {
@@ -103,6 +123,8 @@ void RMWTxn::Prepare()
     for (int i = 0; i < kTotal; i++) dbk[i].k = keys[i];
     INIT_ROUTINE_BRK(8192);
 
+    memcpy(state->ops, ops, sizeof(ops));
+    memcpy(state->fields, fields, sizeof(fields));
     // Omit the return value because this workload is totally single node
     TxnIndexLookup<DummySliceRouter, RMWState::LookupCompletion, void>(
         nullptr,
@@ -146,14 +168,27 @@ void RMWTxn::Prepare()
 void RMWTxn::WriteRow(TxnRow vhandle)
 {
   auto dbv = vhandle.Read<Ycsb::Value>();
-  dbv.v.assign(Client::zero_data, 100);
-  dbv.v.resize_junk(999);
+  dbv.v.assign(Client::zero_data, sql::kYcsbFieldSize);
+  dbv.v.resize_junk(sql::kYcsbRecordSize - 1);
   vhandle.Write(dbv);
 }
 
 void RMWTxn::ReadRow(TxnRow vhandle)
 {
   vhandle.Read<Ycsb::Value>();
+//  vhandle.Read<Ycsb::Field>();
+}
+
+void RMWTxn::ReadField(TxnRow vhandle, uint8_t field_id)
+{
+  vhandle.ReadField<Ycsb::Value>(field_id, sql::kYcsbFieldSize);
+}
+
+void RMWTxn::UpdateRow(TxnRow vhandle)
+{
+  Ycsb::Value dbv;
+  dbv.v.resize_junk(sql::kYcsbRecordSize - 1);
+  vhandle.Write(dbv);
 }
 
 void RMWTxn::Run()
@@ -162,21 +197,21 @@ void RMWTxn::Run()
     state->signal = 0;
 
   if (!Options::kEnablePartition) {
-    auto bitmap = 1ULL << (kTotal - Client::g_extra_read - 1);
-    for (int i = 0; i < kTotal - Client::g_extra_read - 1; i++) {
-      state->futures[i] = UpdateForKey(
-          1, state->rows[i],
-          [](const auto &ctx, VHandle *row) {
-            auto &[state, index_handle] = ctx;
-            WriteRow(index_handle(row));
-            if (Client::g_dependency
-                && state->signal.fetch_add(1) + 1 == kTotal - Client::g_extra_read - 1)
-              state->deps.Signal();
-          });
-
-      if (state->futures[i].has_callback())
-        bitmap |= 1ULL << i;
-    }
+//    auto bitmap = 1ULL << (kTotal - Client::g_extra_read - 1);
+//    for (int i = 0; i < kTotal - Client::g_extra_read - 1; i++) {
+//      state->futures[i] = UpdateForKey(
+//          1, state->rows[i],
+//          [](const auto &ctx, VHandle *row) {
+//            auto &[state, index_handle] = ctx;
+//            WriteRow(index_handle(row));
+//            if (Client::g_dependency
+//                && state->signal.fetch_add(1) + 1 == kTotal - Client::g_extra_read - 1)
+//              state->deps.Signal();
+//          });
+//
+//      if (state->futures[i].has_callback())
+//        bitmap |= 1ULL << i;
+//    }
 
     auto aff = std::numeric_limits<uint64_t>::max();
     // auto aff = AffinityFromRows(bitmap, state->rows);
@@ -184,15 +219,25 @@ void RMWTxn::Run()
         MakeContext(), 1,
         [](const auto &ctx) {
           auto &[state, index_handle] = ctx;
-          for (int i = 0; i < kTotal - Client::g_extra_read - 1; i++) {
-            state->futures[i].Invoke(state, index_handle);
-          }
-          if (Client::g_dependency) {
-            state->deps.Wait();
-          }
-          WriteRow(index_handle(state->rows[kTotal - Client::g_extra_read - 1]));
-          for (auto i = kTotal - Client::g_extra_read; i < kTotal; i++) {
-            ReadRow(index_handle(state->rows[i]));
+//          for (int i = 0; i < kTotal - Client::g_extra_read - 1; i++) {
+//            state->futures[i].Invoke(state, index_handle);
+//          }
+//          if (Client::g_dependency) {
+//            state->deps.Wait();
+//          }
+//          WriteRow(index_handle(state->rows[kTotal - Client::g_extra_read - 1]));
+//          for (auto i = kTotal - Client::g_extra_read; i < kTotal; i++) {
+//            ReadRow(index_handle(state->rows[i]));
+//          }
+          for (int i = 0; i < kTotal; i++) {
+            if (state->ops[i] == YcsbOpType::FULLREAD)
+              ReadRow(index_handle(state->rows[i]));
+            else if (state->ops[i] == YcsbOpType::READ)
+              ReadField(index_handle(state->rows[i]), state->fields[i]);
+            else if (state->ops[i] == YcsbOpType::UPDATE)
+              UpdateRow(index_handle(state->rows[i]));
+            else if (state->ops[i] == YcsbOpType::RMW)
+              WriteRow(index_handle(state->rows[i]));
           }
         },
         aff);
@@ -298,7 +343,7 @@ void YcsbLoader::Run()
       Ycsb::Key dbk;
       Ycsb::Value dbv;
       dbk.k = i;
-      dbv.v.resize_junk(999);
+      dbv.v.resize_junk(sql::kYcsbRecordSize - 1);
       auto handle = mgr.Get<ycsb::Ycsb>().SearchOrCreate(dbk.EncodeView(buf));
       // TODO: slice mapping table stuff?
       felis::InitVersion(handle, dbv.Encode());
@@ -327,15 +372,25 @@ void YcsbLoader::Run()
 #endif
 }
 
-size_t Client::g_table_size = 10000000;
+size_t Client::g_table_size = 1000000;
 double Client::g_theta = 0.00;
 int Client::g_extra_read = 0;
 int Client::g_contention_key = 0;
 bool Client::g_dependency = false;
 
-Client::Client() noexcept
+Client::Client() noexcept : rng{std::random_device{}()}, field_dist{0, sql::kYcsbNumFields - 1}, write_dist{0, 99}
 {
-  rand.init(g_table_size, g_theta, 1238);
+  std::random_device rd;
+  rand.init(g_table_size, g_theta, rd());
+  if (ycsb_type == YcsbType::YCSB_A) {
+    write_threshold = 50;
+  } else if (ycsb_type == YcsbType::YCSB_B) {
+    write_threshold = 5;
+  } else if (ycsb_type == YcsbType::YCSB_C) {
+    write_threshold = 0;
+  } else {
+    write_threshold = 50;
+  }
 }
 
 BaseTxn *Client::CreateTxn(uint64_t serial_id)
